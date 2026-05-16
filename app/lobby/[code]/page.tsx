@@ -26,7 +26,9 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   // React state for the list of players currently in the lobby.
   // players = current array
   // setPlayers = function used to update the array
-const [players, setPlayers] = useState<string[]>([]);
+  type Player = {name : string; isReady : boolean;};
+
+const [players, setPlayers] = useState<Player[]>([]);
 
   // Stores the text currently typed into the input box.
   const [playerName, setPlayerName] = useState("");
@@ -38,16 +40,39 @@ const [players, setPlayers] = useState<string[]>([]);
     const savedName = localStorage.getItem(`hiddenparty-name-${code}`);
 
     if (savedName) {
-        setCurrentPlayerName(savedName);
-        setPlayerName(savedName);
-        setPlayers((oldPlayers) => {
-        if (oldPlayers.includes(savedName)) return oldPlayers;
-        return [...oldPlayers, savedName];
-        });
-     }
-    }, [code]);
+
+      setCurrentPlayerName(savedName);
+
+      setPlayerName(savedName);
+
+      setPlayers((oldPlayers) => {
+
+        // Check if player already exists
+        const exists = oldPlayers.some(
+          (player) => player.name === savedName
+        );
+
+        if (exists) return oldPlayers;
+
+        // Add returning player back into lobby
+        return [
+          ...oldPlayers,
+          {
+            name: savedName,
+            isReady: false,
+          },
+        ];
+      });
+    }
+  }, [code]);
   // Stores the currently selected game mode
   const [gameMode, setGameMode] = useState("imposter");
+
+  //imposter setting
+  const [imposterMode, setImposterMode] = useState("no-word");
+
+  //Mafia/werewolf settings
+  const [roleCount, setRoleCount] = useState(2);
 
   // Runs when the Join button is clicked.
     function addPlayer() {
@@ -57,8 +82,8 @@ const [players, setPlayers] = useState<string[]>([]);
 
     const nameExists = players.some(
         (player) =>
-        player.toLowerCase() === trimmedName.toLowerCase() &&
-        player.toLowerCase() !== currentPlayerName.toLowerCase()
+        player.name.toLowerCase() === trimmedName.toLowerCase() &&
+        player.name.toLowerCase() !== currentPlayerName.toLowerCase()
     );
 
     if (nameExists) {
@@ -69,11 +94,13 @@ const [players, setPlayers] = useState<string[]>([]);
     if (currentPlayerName) {
         setPlayers(
         players.map((player) =>
-            player === currentPlayerName ? trimmedName : player
-        )
-        );
+          player.name === currentPlayerName
+            ? { ...player, name: trimmedName }
+            : player
+            )
+          );
     } else {
-        setPlayers([...players, trimmedName]);
+        setPlayers([...players, { name: trimmedName, isReady: false }]);
     }
 
     setCurrentPlayerName(trimmedName);
@@ -81,6 +108,37 @@ const [players, setPlayers] = useState<string[]>([]);
     setPlayerName("");
     }
 
+    function toggleReady() {
+    if (!currentPlayerName) return;
+
+    setPlayers(
+      players.map((player) =>
+        player.name === currentPlayerName
+          ? { ...player, isReady: !player.isReady }
+          : player
+      )
+    );
+  }
+
+  // Finds the current player's object in the players array
+  const currentPlayer = players.find(
+    (player) => player.name === currentPlayerName
+  );
+
+  const gameSettings = {
+    mode: gameMode,
+    players,
+    imposter:{
+      imposterMode,
+    },
+    socialDeduction:{
+      roleCount,
+    },
+  };
+
+  function startGame(){
+    console.log("Starting game with settings:", gameSettings);
+  }
   // JSX = HTML-like UI returned by the component.
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center py-20">
@@ -104,7 +162,7 @@ const [players, setPlayers] = useState<string[]>([]);
 
     <select
         value={gameMode}
-
+        
         // Updates game mode when user selects an option
         onChange={(e) => setGameMode(e.target.value)}
 
@@ -123,7 +181,58 @@ const [players, setPlayers] = useState<string[]>([]);
         </option>
 
     </select>
+    {/* Imposter-specific settings */}
+  {gameMode === "imposter" && (
 
+    <div className="mt-6">
+
+      <label className="block mb-2 text-sm text-gray-400">
+        Imposter Mode
+      </label>
+
+      <select
+        value={imposterMode}
+        onChange={(e) => setImposterMode(e.target.value)}
+        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
+      >
+        <option value="no-word">
+          No Word
+        </option>
+
+        <option value="similar-word">
+          Similar Word
+        </option>
+
+      </select>
+
+    </div>
+
+  )}
+
+  {/* Mafia/Werewolf role settings */}
+  {(gameMode === "mafia" || gameMode === "werewolf") && (
+
+    <div className="mt-6">
+
+      <label className="block mb-2 text-sm text-gray-400">
+        Special Roles
+      </label>
+
+    <select
+      value={roleCount}
+      onChange={(e) => setRoleCount(Number(e.target.value))}
+      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
+    >
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((number) => (
+        <option key={number} value={number}>
+          {number}
+        </option>
+      ))}
+    </select>
+
+    </div>
+
+  )}
     </div>
 
       {/* Player list container */}
@@ -140,12 +249,24 @@ const [players, setPlayers] = useState<string[]>([]);
 
             <div
               key={index}
-              // key helps React track list items efficiently
-              className="bg-zinc-800 px-4 py-3 rounded-xl"
+              className="bg-zinc-800 px-4 py-3 rounded-xl flex justify-between items-center"
             >
-              {player}
-            </div>
+              <span>{player.name}</span>
 
+            <div className="flex gap-2">
+              {player.isReady && (
+                <span className="text-xs bg-green-500 text-black px-2 py-1 rounded-full">
+                  Ready
+                </span>
+              )}
+
+              {index === 0 && (
+                <span className="text-xs bg-blue-500 text-black px-2 py-1 rounded-full">
+                  Host
+                </span>
+              )}
+            </div>
+            </div>
           ))}
 
         </div>
@@ -186,9 +307,26 @@ const [players, setPlayers] = useState<string[]>([]);
 
         </div>
       </div>
+      <button
+        onClick={toggleReady}
+        disabled={!currentPlayerName}
+        className="mt-8 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-purple-500 disabled:bg-zinc-700 disabled:text-zinc-400"
+      >
+        {currentPlayer?.isReady ? "Unready" : "Ready"}
+      </button>
+
+      <button
+        onClick={() => console.log(gameSettings)}
+        className="mt-6 bg-zinc-700 px-8 py-4 rounded-2xl text-xl hover:bg-zinc-600"
+        >
+          View Game Setting
+       </button>
 
       {/* Start game button */}
-      <button className="mt-10 bg-green-600 px-8 py-4 rounded-2xl text-xl hover:bg-green-500">
+      <button  
+        onClick={startGame}
+        className="mt-10 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-green-500"
+      >
         Start {gameMode} Game
       </button>
 
