@@ -6,6 +6,8 @@ import { use, useEffect, useState } from "react";
 // useState -> lets the UI remember/change values
 // use -> unwraps the Promise version of params in Next.js 16
 
+import { socket } from "@/src/library/socket";
+
 // Defines the structure of the props passed into this page.
 type LobbyPageProps = {
   // In Next.js 16, params is now a Promise.
@@ -64,6 +66,23 @@ const [players, setPlayers] = useState<Player[]>([]);
         ];
       });
     }
+    //connects to socket server
+    socket.connect();
+    
+    socket.emit("get-lobby", {
+      code,
+    });
+
+    // Listen for lobby updates
+    socket.on("lobby-update", (lobby) =>{
+      console.log("Lobby updated:", lobby);
+      setPlayers(lobby.players);
+    });
+
+    //cleanup
+    return () => {
+      socket.off("lobby-update");
+    };
   }, [code]);
   // Stores the currently selected game mode
   const [gameMode, setGameMode] = useState("imposter");
@@ -104,6 +123,10 @@ const [players, setPlayers] = useState<Player[]>([]);
     }
 
     setCurrentPlayerName(trimmedName);
+    socket.emit("join-lobby", {
+      code,
+      playerName: trimmedName,
+    });
     localStorage.setItem(`hiddenparty-name-${code}`, trimmedName);
     setPlayerName("");
     }
@@ -111,13 +134,9 @@ const [players, setPlayers] = useState<Player[]>([]);
     function toggleReady() {
     if (!currentPlayerName) return;
 
-    setPlayers(
-      players.map((player) =>
-        player.name === currentPlayerName
-          ? { ...player, isReady: !player.isReady }
-          : player
-      )
-    );
+    socket.emit("toggle-ready", {
+      code,
+    });
   }
 
   // Finds the current player's object in the players array
@@ -302,7 +321,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
             className="bg-blue-600 px-5 rounded-xl hover:bg-blue-500"
           >
-            {currentPlayerName ? "Update" : "Join"}
+            {currentPlayer ? "Update" : "Join"}
           </button>
 
         </div>
