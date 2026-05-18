@@ -8,6 +8,8 @@ import { use, useEffect, useState } from "react";
 
 import { socket } from "@/src/library/socket";
 
+import { useRouter } from "next/navigation";
+
 // Defines the structure of the props passed into this page.
 type LobbyPageProps = {
   // In Next.js 16, params is now a Promise.
@@ -25,10 +27,16 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   // code = "ABCDE"
   const { code } = use(params);
 
+  const router = useRouter();
   // React state for the list of players currently in the lobby.
   // players = current array
   // setPlayers = function used to update the array
-  type Player = {name : string; isReady : boolean;};
+  type Player = {
+    id : string;
+    name : string; 
+    isReady : boolean;
+    isHost : boolean;
+  };
 
 const [players, setPlayers] = useState<Player[]>([]);
 
@@ -39,33 +47,6 @@ const [players, setPlayers] = useState<Player[]>([]);
   const [currentPlayerName, setCurrentPlayerName] = useState("");
 
   useEffect(() => {
-    const savedName = localStorage.getItem(`hiddenparty-name-${code}`);
-
-    if (savedName) {
-
-      setCurrentPlayerName(savedName);
-
-      setPlayerName(savedName);
-
-      setPlayers((oldPlayers) => {
-
-        // Check if player already exists
-        const exists = oldPlayers.some(
-          (player) => player.name === savedName
-        );
-
-        if (exists) return oldPlayers;
-
-        // Add returning player back into lobby
-        return [
-          ...oldPlayers,
-          {
-            name: savedName,
-            isReady: false,
-          },
-        ];
-      });
-    }
     //connects to socket server
     socket.connect();
     
@@ -73,15 +54,35 @@ const [players, setPlayers] = useState<Player[]>([]);
       code,
     });
 
+    //auto joins
+    socket.emit("join-lobby", {
+      code,
+      playerName: "",
+    });
+
     // Listen for lobby updates
     socket.on("lobby-update", (lobby) =>{
       console.log("Lobby updated:", lobby);
       setPlayers(lobby.players);
+      const currentPlayerData = lobby.players.find(
+        (player: Player) => player.id === socket.id
+      );
+
+      if (currentPlayerData) {
+        setCurrentPlayerName(currentPlayerData.name);
+      }
+
+      if (lobby.settings?.mode){
+        setGameMode(lobby.settings.mode);
+        setImposterMode(lobby.settings.imposter.imposterMode);
+        setRoleCount(lobby.settings.socialDeduction.roleCount);
+      }
     });
 
     //cleanup
     return () => {
       socket.off("lobby-update");
+      socket.off("game-started");
     };
   }, [code]);
   // Stores the currently selected game mode
@@ -110,18 +111,6 @@ const [players, setPlayers] = useState<Player[]>([]);
         return;
     }
 
-    if (currentPlayerName) {
-        setPlayers(
-        players.map((player) =>
-          player.name === currentPlayerName
-            ? { ...player, name: trimmedName }
-            : player
-            )
-          );
-    } else {
-        setPlayers([...players, { name: trimmedName, isReady: false }]);
-    }
-
     setCurrentPlayerName(trimmedName);
     socket.emit("join-lobby", {
       code,
@@ -137,12 +126,22 @@ const [players, setPlayers] = useState<Player[]>([]);
     socket.emit("toggle-ready", {
       code,
     });
+
+    socket.on("game-started", (lobby) => {
+      console.log("Game started!", lobby);
+    });
+
+    socket.on("game-started", () => {
+      router.push( `/game/${code}`);
+    });
   }
 
   // Finds the current player's object in the players array
   const currentPlayer = players.find(
     (player) => player.name === currentPlayerName
   );
+
+  const isHost = currentPlayer?.isHost;
 
   const gameSettings = {
     mode: gameMode,
@@ -155,8 +154,21 @@ const [players, setPlayers] = useState<Player[]>([]);
     },
   };
 
+  function updateSettings(newSetting : typeof gameSettings){
+    if (!isHost) return;
+
+    socket.emit("update-settings", {
+      code,
+      settings: newSetting,
+    });
+  }
+
   function startGame(){
-    console.log("Starting game with settings:", gameSettings);
+    if (!isHost) return;
+
+    socket.emit("start-game", {
+      code
+    });
   }
   // JSX = HTML-like UI returned by the component.
   return (
@@ -180,10 +192,20 @@ const [players, setPlayers] = useState<Player[]>([]);
     </h2>
 
     <select
+        disabled={!isHost}
         value={gameMode}
-        
         // Updates game mode when user selects an option
-        onChange={(e) => setGameMode(e.target.value)}
+        onChange={(e) => {
+          const newMode = e.target.value;
+
+          setGameMode(newMode);
+
+          updateSettings({
+            ...gameSettings,
+            mode: newMode,
+          });
+
+        }}
 
         className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
     >
@@ -210,8 +232,21 @@ const [players, setPlayers] = useState<Player[]>([]);
       </label>
 
       <select
+        disabled={!isHost}
         value={imposterMode}
-        onChange={(e) => setImposterMode(e.target.value)}
+        onChange={(e) => {
+          const newImposterMode = e.target.value;
+
+          setImposterMode(newImposterMode);
+
+          updateSettings({
+            ...gameSettings,
+            imposter: {
+              imposterMode: newImposterMode,
+            },
+          });
+        }}
+
         className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
       >
         <option value="no-word">
@@ -238,8 +273,20 @@ const [players, setPlayers] = useState<Player[]>([]);
       </label>
 
     <select
+      disabled={!isHost}
       value={roleCount}
-      onChange={(e) => setRoleCount(Number(e.target.value))}
+      onChange={(e) => {
+        const newRoleCount = Number(e.target.value);
+
+        setRoleCount(newRoleCount);
+
+        updateSettings({
+          ...gameSettings,
+          socialDeduction:{
+            roleCount: newRoleCount,
+          },
+        });
+      }}
       className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
     >
       {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((number) => (
@@ -279,7 +326,7 @@ const [players, setPlayers] = useState<Player[]>([]);
                 </span>
               )}
 
-              {index === 0 && (
+              {player.isHost && (
                 <span className="text-xs bg-blue-500 text-black px-2 py-1 rounded-full">
                   Host
                 </span>
@@ -295,7 +342,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
         <input
         type="text"
-        placeholder="Enter Name"
+        placeholder="Update your name"
         value={playerName}
 
         // Updates the text as the user types
@@ -321,7 +368,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
             className="bg-blue-600 px-5 rounded-xl hover:bg-blue-500"
           >
-            {currentPlayer ? "Update" : "Join"}
+            Update
           </button>
 
         </div>
@@ -343,6 +390,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
       {/* Start game button */}
       <button  
+        disabled={!isHost}
         onClick={startGame}
         className="mt-10 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-green-500"
       >

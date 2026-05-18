@@ -28,32 +28,47 @@ export function setupSocket(server: any) {
 
     // Joining a lobby
     socket.on("join-lobby", ({ code, playerName }) => {
-      if (!lobbies[code]) {
+    if (!lobbies[code]) {
         lobbies[code] = {
-          players: [],
-          settings: {},
+        players: [],
+        settings: {},
         };
-      }
+    }
 
-      const existingPlayer = lobbies[code].players.find(
+    const existingPlayer = lobbies[code].players.find(
         (player: any) => player.id === socket.id
-      );
+    );
 
-      if (existingPlayer) {
-        existingPlayer.name = playerName;
-      } else {
+    if (existingPlayer) {
+        existingPlayer.name =
+        playerName?.trim() || existingPlayer.name;
+    } else {
+        const playerNumber = lobbies[code].players.length + 1;
+
         lobbies[code].players.push({
-          id: socket.id,
-          name: playerName,
-          isReady: false,
+        id: socket.id,
+        name: playerName?.trim() || `Player ${playerNumber}`,
+        isReady: false,
+        isHost: lobbies[code].players.length === 0,
         });
-      }
+    }
 
-      socket.join(code);
+    socket.join(code);
 
-      io.to(code).emit("lobby-update", lobbies[code]);
+    io.to(code).emit("lobby-update", lobbies[code]);
 
-      console.log(lobbies);
+    console.log(lobbies);
+    });
+
+    //to sync up settings through the server
+    socket.on("update-settings", ({code, settings}) => {
+        const lobby = lobbies[code];
+
+        if(!lobby) return;
+
+        lobby.settings = settings;
+
+        io.to(code).emit("lobby-update", lobby);
     });
 
     // Toggle ready status
@@ -71,6 +86,17 @@ export function setupSocket(server: any) {
       player.isReady = !player.isReady;
 
       io.to(code).emit("lobby-update", lobby);
+    });
+
+    //game start
+    socket.on("start-game", ({ code }) => {
+        const lobby = lobbies[code];
+
+        if (!lobby) return;
+
+        lobby.gameStarted = true;
+
+        io.to(code).emit("game-started", lobby);
     });
 
     // Disconnect handling
