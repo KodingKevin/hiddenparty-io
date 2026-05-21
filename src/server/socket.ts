@@ -94,7 +94,36 @@ export function setupSocket(server: any) {
 
         if (!lobby) return;
 
+        const players = lobby.players;
+
+        if (players.length < 3) return;
+
+        const categories = {
+          Food: ["Pizza", "Burger", "Taco"],
+          Animals: ["Tiger", "Elephant", "Panda"],
+          Movies: ["Shrek", "Titanic", "Avatar"],
+        };
+
+        const categoryNames = Object.keys(categories);
+
+        const randomCategory = categoryNames[Math.floor(Math.random() * categoryNames.length)];
+
+        const words = categories[randomCategory as keyof typeof categories];
+
+        const randomWord = words[Math.floor(Math.random() * words.length)];
+
+        const imposterIndex = Math.floor(Math.random() * players.length);
+
         lobby.gameStarted = true;
+        lobby.gameState = {
+          mode : lobby.settings?.mode || "imposter",
+          category: randomCategory,
+          word: randomWord,
+          players: players.map((player: any, index: number) => ({
+            ...player,
+            role: index === imposterIndex ? "imposter" : "crewmate",
+          })),
+        };
 
         io.to(code).emit("game-started", lobby);
     });
