@@ -68,16 +68,21 @@ const [players, setPlayers] = useState<Player[]>([]);
         (player: Player) => player.id === socket.id
       );
 
-      if (currentPlayerData) {
-        setCurrentPlayerName(currentPlayerData.name);
-      }
+    socket.on("game-started", (lobby) => {
+      console.log("Game started!", lobby);
+      router.push(`/game/${code}`);
+    })
 
-      if (lobby.settings?.mode){
-        setGameMode(lobby.settings.mode);
-        setImposterMode(lobby.settings.imposter.imposterMode);
-        setRoleCount(lobby.settings.socialDeduction.roleCount);
-      }
-    });
+    if (currentPlayerData) {
+      setCurrentPlayerName(currentPlayerData.name);
+    }
+
+    if (lobby.settings?.mode){
+      setGameMode(lobby.settings.mode);
+      setImposterMode(lobby.settings.imposter.imposterMode);
+      setRoleCount(lobby.settings.socialDeduction.roleCount);
+    }
+  });
 
     //cleanup
     return () => {
@@ -127,13 +132,6 @@ const [players, setPlayers] = useState<Player[]>([]);
       code,
     });
 
-    socket.on("game-started", (lobby) => {
-      console.log("Game started!", lobby);
-    });
-
-    socket.on("game-started", () => {
-      router.push( `/game/${code}`);
-    });
   }
 
   // Finds the current player's object in the players array
@@ -143,6 +141,19 @@ const [players, setPlayers] = useState<Player[]>([]);
 
   const isHost = currentPlayer?.isHost;
 
+  const allPlayersReady = players.length > 0 && players.every((player) => player.isReady);
+
+  const canStartGame = isHost && players.length >= 3 && allPlayersReady;
+
+  let startMessage = "";
+
+  if (!isHost){
+    startMessage = "Only the host can start the game";
+  } else if (players.length < 3){
+    startMessage = "Need at least 3 players to start";
+  } else if (!allPlayersReady){
+    startMessage = "All players must be ready.";
+  }
   const gameSettings = {
     mode: gameMode,
     players,
@@ -164,7 +175,10 @@ const [players, setPlayers] = useState<Player[]>([]);
   }
 
   function startGame(){
-    if (!isHost) return;
+    if (!canStartGame){
+      alert(startMessage);
+      return;
+    }
 
     socket.emit("start-game", {
       code
@@ -380,17 +394,9 @@ const [players, setPlayers] = useState<Player[]>([]);
       >
         {currentPlayer?.isReady ? "Unready" : "Ready"}
       </button>
-
-      <button
-        onClick={() => console.log(gameSettings)}
-        className="mt-6 bg-zinc-700 px-8 py-4 rounded-2xl text-xl hover:bg-zinc-600"
-        >
-          View Game Setting
-       </button>
-
+    
       {/* Start game button */}
       <button  
-        disabled={!isHost}
         onClick={startGame}
         className="mt-10 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-green-500"
       >
