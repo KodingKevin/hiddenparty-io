@@ -1,3 +1,4 @@
+import { Play } from "next/font/google";
 import { Server } from "socket.io";
 
 // Stores all active lobbies
@@ -12,7 +13,6 @@ export function setupSocket(server: any) {
 
   io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
-
     socket.on("get-lobby", ({ code }) => {
     if (!lobbies[code]) {
         lobbies[code] = {
@@ -50,6 +50,7 @@ export function setupSocket(server: any) {
         name: playerName?.trim() || `Player ${playerNumber}`,
         isReady: false,
         isHost: lobbies[code].players.length === 0,
+        location: "lobby",
         });
     }
 
@@ -114,25 +115,63 @@ export function setupSocket(server: any) {
 
         const imposterIndex = Math.floor(Math.random() * players.length);
 
+        const imposterMode = lobby.settings?.imposter?.imposterMode || "no-word";
+
+        const similarWord = words.find((word) => word !== randomWord) || "Mystery";
+
         lobby.gameStarted = true;
         lobby.gameState = {
           mode : lobby.settings?.mode || "imposter",
           category: randomCategory,
           word: randomWord,
+          imposterMode,
+          imposterWord: similarWord,
           players: players.map((player: any, index: number) => ({
             ...player,
+            location:"game",
             role: index === imposterIndex ? "imposter" : "crewmate",
           })),
         };
+      io.to(code).emit("game-started", lobby);
+    })
 
-        io.to(code).emit("game-started", lobby);
-    });
+    //return to lobby
+    socket.on("return-to-lobby", ({ code }) => {
+      const lobby = lobbies[code];
 
+      if (!lobby) return;
+
+      const player = lobby.players.find(
+        (player : any) => player.id === socket.id
+      );
+
+      if (!player) return;
+      
+      player.location = "lobby";
+      player.isReady = false;
+
+      io.to(code).emit("lobby-update", lobby);
+    })
+    
     // Disconnect handling
     socket.on("disconnect", () => {
       console.log("User disconnected:", socket.id);
 
       for (const code in lobbies) {
+        const leavingPlayer = lobbies[code].players.find(
+          (player: any) => player.id === socket.id
+        );
+        if (leavingPlayer?.isHost){
+          lobbies[code].gameStarted = false;
+          lobbies[code].gameState = null;
+
+          lobbies[code].players = lobbies[code].players.map((player: any) => ({
+            ...player,
+            isReady: false,
+            location: "lobby"
+          }));
+        }
+
         lobbies[code].players = lobbies[code].players.filter(
           (player: any) => player.id !== socket.id
         );

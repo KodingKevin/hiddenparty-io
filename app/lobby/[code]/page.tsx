@@ -36,6 +36,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     name : string; 
     isReady : boolean;
     isHost : boolean;
+    location: "lobby" | "game";
   };
 
 const [players, setPlayers] = useState<Player[]>([]);
@@ -47,49 +48,47 @@ const [players, setPlayers] = useState<Player[]>([]);
   const [currentPlayerName, setCurrentPlayerName] = useState("");
 
   useEffect(() => {
-    //connects to socket server
     socket.connect();
-    
+
     socket.emit("get-lobby", {
       code,
     });
 
-    //auto joins
     socket.emit("join-lobby", {
       code,
       playerName: "",
     });
 
-    // Listen for lobby updates
-    socket.on("lobby-update", (lobby) =>{
+    socket.on("lobby-update", (lobby) => {
       console.log("Lobby updated:", lobby);
+
       setPlayers(lobby.players);
+
       const currentPlayerData = lobby.players.find(
         (player: Player) => player.id === socket.id
       );
 
+      if (currentPlayerData) {
+        setCurrentPlayerName(currentPlayerData.name);
+      }
+
+      if (lobby.settings?.mode) {
+        setGameMode(lobby.settings.mode);
+        setImposterMode(lobby.settings.imposter.imposterMode);
+        setRoleCount(lobby.settings.socialDeduction.roleCount);
+      }
+    });
+
     socket.on("game-started", (lobby) => {
       console.log("Game started!", lobby);
       router.push(`/game/${code}`);
-    })
+    });
 
-    if (currentPlayerData) {
-      setCurrentPlayerName(currentPlayerData.name);
-    }
-
-    if (lobby.settings?.mode){
-      setGameMode(lobby.settings.mode);
-      setImposterMode(lobby.settings.imposter.imposterMode);
-      setRoleCount(lobby.settings.socialDeduction.roleCount);
-    }
-  });
-
-    //cleanup
     return () => {
       socket.off("lobby-update");
       socket.off("game-started");
     };
-  }, [code]);
+  }, [code, router]);
   // Stores the currently selected game mode
   const [gameMode, setGameMode] = useState("imposter");
 
