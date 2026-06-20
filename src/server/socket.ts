@@ -1,4 +1,3 @@
-import { Play } from "next/font/google";
 import { Server } from "socket.io";
 
 // Stores all active lobbies
@@ -119,6 +118,7 @@ export function setupSocket(server: any) {
 
         const similarWord = words.find((word) => word !== randomWord) || "Mystery";
 
+
         lobby.gameStarted = true;
         lobby.gameState = {
           mode : lobby.settings?.mode || "imposter",
@@ -126,6 +126,9 @@ export function setupSocket(server: any) {
           word: randomWord,
           imposterMode,
           imposterWord: similarWord,
+          phase: "discussion",
+          currentTurn: 0,
+          round: 1,
           players: players.map((player: any, index: number) => ({
             ...player,
             location:"game",
@@ -134,6 +137,27 @@ export function setupSocket(server: any) {
         };
       io.to(code).emit("game-started", lobby);
     })
+    
+    //next turn event
+    socket.on("next-turn", ({ code }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby?.gameState) return;
+
+      const totalPlayers = lobby.gameState.players.length;
+
+      lobby.gameState.currentTurn += 1;
+
+      if (lobby.gameState.currentTurn >= totalPlayers){
+        lobby.gameState.phase = "voting";
+        lobby.gameState.currentTurn = 0;
+
+        io.to(code).emit("lobby-update", lobby);
+        return;
+      }
+
+      io.to(code).emit("lobby-update", lobby);
+    });
 
     //return to lobby
     socket.on("return-to-lobby", ({ code }) => {
