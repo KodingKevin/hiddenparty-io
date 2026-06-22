@@ -24,6 +24,7 @@ type GameState = {
   phase: "discussion" | "voting" | "results";
   currentTurn: number;
   round: number;
+  votes?: Record<string, string>;
   players: GamePlayer[];
 };
 
@@ -36,6 +37,8 @@ export default function GamePage({ params }: GamePageProps) {
   
   const [cardOpened, setCardOpened] = useState(false);
 
+  const [selectedVote, setSelectedVote] = useState("");
+  
   useEffect(() => {
     socket.connect();
 
@@ -71,6 +74,15 @@ export default function GamePage({ params }: GamePageProps) {
     );
   }
 
+  function submitVote() {
+    if (!selectedVote) return;
+
+    socket.emit("submit-vote", {
+      code,
+      vote: selectedVote,
+    });
+  }
+
   if (gameState.phase === "voting") {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
@@ -79,10 +91,45 @@ export default function GamePage({ params }: GamePageProps) {
         <p className="text-xl text-gray-400 mb-8">
           Round {gameState.round} is complete.
         </p>
-
-        <p className="text-lg text-gray-300 mb-6">
-          Voting system coming next.
+        
+        <p className="text-sm text-gray-400 mb-4">
+          Votes submitted: {Object.keys(gameState.votes || {}).length} / {gameState.players.length}
         </p>
+
+        <div className="flex flex-col gap-3 w-80">
+          {gameState.players.map((player) => (
+            <button
+              key={player.id}
+              onClick={() => setSelectedVote(player.id)}
+              className={`px-4 py-3 rounded-xl border ${
+                selectedVote === player.id
+                  ? "bg-blue-600 border-blue-400"
+                  : "bg-zinc-800 border-zinc-700"
+              }`}
+            >
+              Vote {player.name}
+            </button>
+          ))}
+
+          <button
+            onClick={() => setSelectedVote("skip")}
+            className={`px-4 py-3 rounded-xl border ${
+              selectedVote === "skip"
+                ? "bg-blue-600 border-blue-400"
+                : "bg-zinc-800 border-zinc-700"
+            }`}
+          >
+            Skip Vote
+          </button>
+
+          <button
+            onClick={submitVote}
+            disabled={!selectedVote}
+            className="mt-4 bg-green-600 px-6 py-3 rounded-xl disabled:bg-zinc-700 disabled:text-zinc-400"
+          >
+            Submit Vote
+          </button>
+        </div>
 
         <button
           onClick={() => {

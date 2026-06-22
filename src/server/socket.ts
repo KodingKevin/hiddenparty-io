@@ -159,6 +159,27 @@ export function setupSocket(server: any) {
       io.to(code).emit("lobby-update", lobby);
     });
 
+    //players sumbitting their votes at the voting phase
+    socket.on("submit-vote", ({ code, vote })=>{
+      const lobby = lobbies[code];
+
+      if (!lobby?.gameState) return;
+
+      if (!lobby.gameState.votes){
+        lobby.gameState.votes = {};
+      }
+
+      lobby.gameState.votes[socket.id] = vote;
+
+      const voteCount = Object.keys(lobby.gameState.votes).length;
+      const totalPlayers = lobby.gameState.players.length;
+
+      if (voteCount >= totalPlayers){
+        lobby.gameState.phase = "results";
+      }
+      io.to(code).emit("lobby-update", lobby);
+    });
+
     //return to lobby
     socket.on("return-to-lobby", ({ code }) => {
       const lobby = lobbies[code];
