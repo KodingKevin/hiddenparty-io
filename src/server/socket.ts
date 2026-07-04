@@ -118,6 +118,7 @@ export function setupSocket(server: any) {
 
         const similarWord = words.find((word) => word !== randomWord) || "Mystery";
 
+        const startingPlayer = Math.floor(Math.random() * players.length);
 
         lobby.gameStarted = true;
         lobby.gameState = {
@@ -127,8 +128,9 @@ export function setupSocket(server: any) {
           imposterMode,
           imposterWord: similarWord,
           phase: "discussion",
-          currentTurn: 0,
+          currentTurn: startingPlayer,
           round: 1,
+          spokenPlayers: [],
           players: players.map((player: any, index: number) => ({
             ...player,
             location:"game",
@@ -146,15 +148,18 @@ export function setupSocket(server: any) {
 
       const totalPlayers = lobby.gameState.players.length;
 
-      lobby.gameState.currentTurn += 1;
+      lobby.gameState.spokenPlayers.push(lobby.gameState.currentTurn);
 
-      if (lobby.gameState.currentTurn >= totalPlayers){
+      if (lobby.gameState.spokenPlayers.length >= totalPlayers) {
         lobby.gameState.phase = "voting";
         lobby.gameState.currentTurn = 0;
 
         io.to(code).emit("lobby-update", lobby);
         return;
       }
+
+      lobby.gameState.currentTurn =
+        (lobby.gameState.currentTurn + 1) % totalPlayers;
 
       io.to(code).emit("lobby-update", lobby);
     });
