@@ -24,9 +24,13 @@ type GameState = {
   phase: "discussion" | "voting" | "results";
   currentTurn: number;
   round: number;
-  spokenPlayers: number[],
+  spokenPlayers: number[];
   votes?: Record<string, string>;
   players: GamePlayer[];
+  votedPlayerId?: string;
+  votedPlayerName?: string;
+  votedPlayerRole?: "imposter" | "innocent";
+  innocentsWin?: boolean;
 };
 
 export default function GamePage({ params }: GamePageProps) {
@@ -38,8 +42,12 @@ export default function GamePage({ params }: GamePageProps) {
   
   const [cardOpened, setCardOpened] = useState(false);
 
+  const [timeLeft, setTimeLeft] = useState(30);
+
   const [selectedVote, setSelectedVote] = useState("");
   
+  const [hasSubmittedVote, setHasSubmittedVote] = useState(false);
+
   useEffect(() => {
     socket.connect();
 
@@ -63,6 +71,51 @@ export default function GamePage({ params }: GamePageProps) {
     };
   }, [code, router]);
 
+  useEffect(() => {
+    if (!gameState || gameState.phase !== "discussion") {
+      return;
+    }
+
+    setTimeLeft(30);
+
+    const timer = setInterval(() => {
+      setTimeLeft((currentTime) => {
+        if (currentTime <= 1) {
+          clearInterval(timer);
+
+          const activePlayer =
+            gameState.players[gameState.currentTurn];
+
+          if (activePlayer?.id === socket.id) {
+            socket.emit("next-turn", {
+              code,
+            });
+          }
+
+          return 0;
+        }
+
+        return currentTime - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [
+    code,
+    gameState?.currentTurn,
+    gameState?.phase,
+    gameState?.players,
+  ]);
+
+  useEffect(() => {
+    if (gameState?.phase === "voting") {
+      setHasSubmittedVote(false);
+      setSelectedVote("");
+    }
+  }, [gameState?.phase]);
+
   const currentPlayer = gameState?.players.find(
     (player) => player.id === socket.id
   );
@@ -82,6 +135,8 @@ export default function GamePage({ params }: GamePageProps) {
       code,
       vote: selectedVote,
     });
+
+    setHasSubmittedVote(true);
   }
 
   if (gameState.phase === "voting") {
@@ -125,10 +180,16 @@ export default function GamePage({ params }: GamePageProps) {
 
           <button
             onClick={submitVote}
-            disabled={!selectedVote}
-            className="mt-4 bg-green-600 px-6 py-3 rounded-xl disabled:bg-zinc-700 disabled:text-zinc-400"
+            disabled={!selectedVote || hasSubmittedVote}
+            className={`mt-4 px-6 py-3 rounded-xl transition-all duration-200 ${
+              hasSubmittedVote
+                ? "bg-green-700 text-white cursor-not-allowed"
+                : !selectedVote
+                ? "bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                : "bg-green-600 hover:bg-green-500 hover:scale-105"
+            }`}
           >
-            Submit Vote
+            {hasSubmittedVote ? "✓ Vote Submitted" : "Submit Vote"}
           </button>
         </div>
             
@@ -158,9 +219,30 @@ export default function GamePage({ params }: GamePageProps) {
           {gameState.word}
         </p>
 
-        <p className="text-lg text-gray-300 mb-8">
-          Vote counting / winner logic coming next.
-        </p>
+        <div className="text-center mb-8">
+          <p className="text-xl text-gray-300 mb-3">
+            {gameState.votedPlayerName} was voted out.
+          </p>
+
+          <p className="text-2xl font-bold mb-6">
+            They were{" "}
+            {gameState.votedPlayerRole === "imposter"
+              ? "the Imposter!"
+              : "Innocent."}
+          </p>
+
+          <p
+            className={`text-4xl font-bold ${
+              gameState.innocentsWin
+                ? "text-green-500"
+                : "text-red-500"
+            }`}
+          >
+            {gameState.innocentsWin
+              ? "Innocents Win!"
+              : "Imposter Wins!"}
+          </p>
+        </div>
 
         <button
           onClick={() => {
@@ -198,8 +280,21 @@ export default function GamePage({ params }: GamePageProps) {
     </p>
 
     <div className="mb-6 text-center">
-      <p className="text-sm text-gray-400 mb-2">Turn Order</p>
+      <p className="text-sm text-gray-400 mb-2">
+        Time Remaining
+      </p>
 
+      <p
+        className={`text-5xl font-mono font-bold ${
+          timeLeft <= 5 ? "text-red-500" : "text-white"
+        }`}
+      >
+        {timeLeft}
+      </p>
+    </div>
+
+      <div className="mb-6 text-center">
+        <p className="text-sm text-gray-400 mb-2">Turn Order</p>
       <div className="flex flex-col gap-2">
         {gameState.players.map((player, index) => (
           <div
@@ -265,9 +360,14 @@ export default function GamePage({ params }: GamePageProps) {
     
     <button
       onClick={nextTurn}
-      className="mt-6 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500"
-    > 
-      Next Turn 
+      disabled={
+        gameState.players[gameState.currentTurn]?.id !== socket.id
+      }
+      className="mt-6 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
+    >
+      {gameState.players[gameState.currentTurn]?.id === socket.id
+        ? "Finish Turn"
+        : `Waiting for ${gameState.players[gameState.currentTurn]?.name}`}
     </button>
 
     <button 

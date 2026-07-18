@@ -3,6 +3,17 @@ import { Server } from "socket.io";
 // Stores all active lobbies
 const lobbies: Record<string, any> = {};
 
+//helper function to assist with voting logic
+function startNextRound(lobby: any) {
+  const totalPlayers = lobby.gameState.players.length;
+
+  lobby.gameState.round += 1;
+  lobby.gameState.phase = "discussion";
+  lobby.gameState.currentTurn =
+    Math.floor(Math.random() * totalPlayers);
+  lobby.gameState.spokenPlayers = [];
+  lobby.gameState.votes = {};
+}
 export function setupSocket(server: any) {
   const io = new Server(server, {
     cors: {
@@ -165,13 +176,25 @@ export function setupSocket(server: any) {
     });
 
     //players sumbitting their votes at the voting phase
-    socket.on("submit-vote", ({ code, vote })=>{
+    socket.on("submit-vote", ({ code, vote }) => {
       const lobby = lobbies[code];
 
       if (!lobby?.gameState) return;
+      if (lobby.gameState.phase !== "voting") return;
 
-      if (!lobby.gameState.votes){
+      const voter = lobby.gameState.players.find(
+        (player: any) => player.id === socket.id
+      );
+
+      if (!voter) return;
+
+      if (!lobby.gameState.votes) {
         lobby.gameState.votes = {};
+      }
+
+      // Prevent a player from voting more than once
+      if (lobby.gameState.votes[socket.id]) {
+        return;
       }
 
       lobby.gameState.votes[socket.id] = vote;
@@ -179,9 +202,53 @@ export function setupSocket(server: any) {
       const voteCount = Object.keys(lobby.gameState.votes).length;
       const totalPlayers = lobby.gameState.players.length;
 
-      if (voteCount >= totalPlayers){
-        lobby.gameState.phase = "results";
+      if (voteCount < totalPlayers) {
+        io.to(code).emit("lobby-update", lobby);
+        return;
       }
+
+      const voteTotals: Record<string, number> = {};
+
+      Object.values(lobby.gameState.votes).forEach((submittedVote: any) => {
+        voteTotals[submittedVote] =
+          (voteTotals[submittedVote] || 0) + 1;
+      });
+
+      const highestVoteCount = Math.max(...Object.values(voteTotals));
+
+      const highestVotes = Object.keys(voteTotals).filter(
+        (target) => voteTotals[target] === highestVoteCount
+      );
+
+      // Tie vote
+      if (highestVotes.length > 1) {
+        startNextRound(lobby);
+        io.to(code).emit("lobby-update", lobby);
+        return;
+      }
+
+      const winningVote = highestVotes[0];
+
+      // Skip vote won
+      if (winningVote === "skip") {
+        startNextRound(lobby);
+        io.to(code).emit("lobby-update", lobby);
+        return;
+      }
+
+      const votedPlayer = lobby.gameState.players.find(
+        (player: any) => player.id === winningVote
+      );
+
+      lobby.gameState.phase = "results";
+      lobby.gameState.votedPlayerId = winningVote;
+      lobby.gameState.votedPlayerName =
+        votedPlayer?.name || "Unknown Player";
+      lobby.gameState.votedPlayerRole =
+        votedPlayer?.role || "innocent";
+      lobby.gameState.crewmatesWon =
+        votedPlayer?.role === "imposter";
+
       io.to(code).emit("lobby-update", lobby);
     });
 
