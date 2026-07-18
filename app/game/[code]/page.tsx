@@ -76,7 +76,7 @@ export default function GamePage({ params }: GamePageProps) {
       return;
     }
 
-    setTimeLeft(30);
+    setTimeLeft(45);
 
     const timer = setInterval(() => {
       setTimeLeft((currentTime) => {
