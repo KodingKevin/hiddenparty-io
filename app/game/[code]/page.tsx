@@ -122,7 +122,7 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (!gameState || !currentPlayer) {
     return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
         Loading game...
       </main>
     );
@@ -141,7 +141,7 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "voting") {
     return (
-      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
         <h1 className="text-5xl font-bold mb-6">Voting Phase</h1>
 
         <p className="text-xl text-gray-400 mb-8">
@@ -191,6 +191,13 @@ export default function GamePage({ params }: GamePageProps) {
           >
             {hasSubmittedVote ? "✓ Vote Submitted" : "Submit Vote"}
           </button>
+          
+          {hasSubmittedVote && (
+            <p className="mt-3 text-green-400 text-sm text-center">
+              Waiting for the other players to finish voting...
+            </p>
+          )}
+
         </div>
             
         <button
@@ -208,7 +215,7 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "results") {
     return (
-      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
         <h1 className="text-5xl font-bold mb-6">Results</h1>
 
         <p className="text-xl text-gray-400 mb-4">
@@ -264,120 +271,148 @@ export default function GamePage({ params }: GamePageProps) {
   }
 
   return (
-  <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-    <h1 className="text-5xl font-bold mb-6">HiddenParty.IO</h1>
+    <main className="min-h-dvh bg-black text-white flex items-center justify-center p-3 sm:p-4 overflow-x-hidden">
+      <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
 
-    <p className="text-xl text-gray-400 mb-4">
-      Category: {gameState.category}
-    </p>
+        {/* LEFT SIDE */}
+        <section className="flex flex-col items-center text-center">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-3">
+            HiddenParty.IO
+          </h1>
 
-    <p className="text-lg text-gray-400 mb-2">
-      Round {gameState.round}
-    </p>
-
-    <p className="text-2xl font-bold mb-6">
-      Current Turn: {gameState.players[gameState.currentTurn]?.name}
-    </p>
-
-    <div className="mb-6 text-center">
-      <p className="text-sm text-gray-400 mb-2">
-        Time Remaining
-      </p>
-
-      <p
-        className={`text-5xl font-mono font-bold ${
-          timeLeft <= 5 ? "text-red-500" : "text-white"
-        }`}
-      >
-        {timeLeft}
-      </p>
-    </div>
-
-      <div className="mb-6 text-center">
-        <p className="text-sm text-gray-400 mb-2">Turn Order</p>
-      <div className="flex flex-col gap-2">
-        {gameState.players.map((player, index) => (
-          <div
-            key={player.id}
-            className={`px-4 py-2 rounded-xl ${
-              index === gameState.currentTurn
-                ? "bg-blue-600"
-                : gameState.spokenPlayers.includes(index)
-                ? "bg-green-700"
-                : "bg-zinc-800"
-            }`}
-          >
-            {player.name}
-            {index === gameState.currentTurn && " 🎤"}
-            {gameState.spokenPlayers.includes(index) && " ✓"}
-          </div>
-        ))}
-      </div>
-    </div>
-
-    <div
-    onClick={() => setCardOpened(!cardOpened)}
-    className="cursor-pointer"
-    >
-    {!cardOpened ? (
-      <div className="relative w-80 h-52 bg-zinc-900 border-4 border-zinc-700 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full border-t-[90px] border-t-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-
-        <div className="absolute bottom-0 left-0 w-full h-full border-b-[90px] border-b-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-
-        <h2 className="z-10 text-3xl font-bold">
-          Open Envelope
-        </h2>
-      </div>
-    ) : (
-      <div className="w-80 h-52 bg-white text-black border-4 border-zinc-300 rounded-2xl flex flex-col items-center justify-center shadow-xl">
-        <p className="text-sm text-gray-500 mb-2">
-          Category
-        </p>
-      
-        <h2 className="text-3xl font-bold mb-6">
-          {gameState.category}
-        </h2>
-
-        {currentPlayer.role === "imposter" ? (
-          gameState.imposterMode === "similar-word" ? (
-            <p className="text-4xl font-bold">
-              {gameState.imposterWord}
-            </p>
-          ) : (
-            <p className="text-xl font-semibold">
-              You are the Imposter
-            </p>
-          )
-        ) : (
-          <p className="text-4xl font-bold">
-            {gameState.word}
+          <p className="text-base sm:text-xl text-gray-400 mb-2">
+            Category: {gameState.category}
           </p>
-        )}
-      </div>
-    )}
-  </div>
-    
-    <button
-      onClick={nextTurn}
-      disabled={
-        gameState.players[gameState.currentTurn]?.id !== socket.id
-      }
-      className="mt-6 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
-    >
-      {gameState.players[gameState.currentTurn]?.id === socket.id
-        ? "Finish Turn"
-        : `Waiting for ${gameState.players[gameState.currentTurn]?.name}`}
-    </button>
 
-    <button 
-      onClick={() => {
-        socket.emit("return-to-lobby", {code});
-        router.push(`/lobby/${code}`);
-      }}
-      className="mt-8 bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
-      > Return to Lobby 
-    </button>
-  </main>
-);
-}
+          <p className="text-base sm:text-lg text-gray-400 mb-2">
+            Round {gameState.round}
+          </p>
+
+          <p className="text-xl sm:text-2xl font-bold mb-4">
+            Current Turn:{" "}
+            {gameState.players[gameState.currentTurn]?.name}
+          </p>
+
+          {/* Timer */}
+          <div className="mb-4 text-center">
+            <p className="text-sm text-gray-400 mb-1">
+              Time Remaining
+            </p>
+
+            <p
+              className={`text-4xl sm:text-5xl font-mono font-bold ${
+                timeLeft <= 5 ? "text-red-500" : "text-white"
+              }`}
+            >
+              {timeLeft}
+            </p>
+          </div>
+
+          {/* Turn order */}
+          <div className="text-center w-full max-w-sm">
+            <p className="text-sm text-gray-400 mb-2">
+              Turn Order
+            </p>
+
+            <div className="flex flex-col gap-2">
+              {gameState.players.map((player, index) => (
+                <div
+                  key={player.id}
+                  className={`px-4 py-2 rounded-xl ${
+                    index === gameState.currentTurn
+                      ? "bg-blue-600"
+                      : gameState.spokenPlayers.includes(index)
+                      ? "bg-green-700"
+                      : "bg-zinc-800"
+                  }`}
+                >
+                  {player.name}
+
+                  {index === gameState.currentTurn && " 🎤"}
+
+                  {gameState.spokenPlayers.includes(index) &&
+                    index !== gameState.currentTurn &&
+                    " ✓"}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* RIGHT SIDE */}
+        <section className="flex flex-col items-center">
+          {/* Envelope */}
+          <div
+            onClick={() => setCardOpened(!cardOpened)}
+            className="cursor-pointer"
+          >
+            {!cardOpened ? (
+              <div className="relative w-[85vw] max-w-80 h-44 sm:h-52 bg-zinc-900 border-4 border-zinc-700 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full border-t-[90px] border-t-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
+
+                <div className="absolute bottom-0 left-0 w-full h-full border-b-[90px] border-b-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
+
+                <h2 className="z-10 text-2xl sm:text-3xl font-bold">
+                  Open Envelope
+                </h2>
+              </div>
+            ) : (
+              <div className="w-[85vw] max-w-80 h-44 sm:h-52 bg-white text-black border-4 border-zinc-300 rounded-2xl flex flex-col items-center justify-center text-center shadow-xl">
+                <p className="text-sm text-gray-500 mb-2">
+                  Category
+                </p>
+
+                <h2 className="text-2xl sm:text-3xl font-bold mb-4">
+                  {gameState.category}
+                </h2>
+
+                {currentPlayer.role === "imposter" ? (
+                  gameState.imposterMode === "similar-word" ? (
+                    <p className="text-3xl sm:text-4xl font-bold">
+                      {gameState.imposterWord}
+                    </p>
+                  ) : (
+                    <p className="text-xl font-semibold">
+                      You are the Imposter
+                    </p>
+                  )
+                ) : (
+                  <p className="text-3xl sm:text-4xl font-bold">
+                    {gameState.word}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Finish turn */}
+          <button
+            onClick={nextTurn}
+            disabled={
+              gameState.players[gameState.currentTurn]?.id !==
+              socket.id
+            }
+            className="mt-6 w-full max-w-80 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
+          >
+            {gameState.players[gameState.currentTurn]?.id === socket.id
+              ? "Finish Turn"
+              : `Waiting for ${
+                  gameState.players[gameState.currentTurn]?.name
+                }`}
+          </button>
+
+          {/* Return to lobby */}
+          <button
+            onClick={() => {
+              socket.emit("return-to-lobby", { code });
+              router.push(`/lobby/${code}`);
+            }}
+            className="mt-4 w-full max-w-80 bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
+          >
+            Return to Lobby
+          </button>
+        </section>
+      </div>
+    </main>
+  );
+  }

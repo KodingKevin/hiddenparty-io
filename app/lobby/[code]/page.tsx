@@ -36,7 +36,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     name : string; 
     isReady : boolean;
     isHost : boolean;
-    location: "lobby" | "game";
+    location: string;
   };
 
 const [players, setPlayers] = useState<Player[]>([]);
@@ -151,7 +151,7 @@ const [players, setPlayers] = useState<Player[]>([]);
   } else if (players.length < 3){
     startMessage = "Need at least 3 players to start";
   } else if (!allPlayersReady){
-    startMessage = "All players must be ready.";
+    startMessage = "All players must be ready";
   }
   const gameSettings = {
     mode: gameMode,
@@ -185,15 +185,15 @@ const [players, setPlayers] = useState<Player[]>([]);
   }
   // JSX = HTML-like UI returned by the component.
   return (
-    <main className="min-h-screen bg-black text-white flex flex-col items-center py-20">
+    <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
       
       {/* Lobby title */}
-      <h1 className="text-5xl font-bold mb-4">
+      <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">
         Lobby
       </h1>
 
       {/* Displays the room code from the URL */}
-      <div className="text-4xl font-mono bg-zinc-900 border border-zinc-700 px-8 py-4 rounded-2xl mb-10">
+      <div className="text-2xl md:text-3xl lg:text-4xl font-mono bg-zinc-900 border border-zinc-700 px-8 py-4 rounded-2xl mb-6">
         {code}
       </div>
 
@@ -386,21 +386,51 @@ const [players, setPlayers] = useState<Player[]>([]);
 
         </div>
       </div>
-      <button
-        onClick={toggleReady}
-        disabled={!currentPlayerName}
-        className="mt-8 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-purple-500 disabled:bg-zinc-700 disabled:text-zinc-400"
-      >
-        {currentPlayer?.isReady ? "Unready" : "Ready"}
-      </button>
-    
-      {/* Start game button */}
-      <button  
-        onClick={startGame}
-        className="mt-10 bg-blue-600 px-8 py-4 rounded-2xl text-xl hover:bg-green-500"
-      >
-        Start {gameMode} Game
-      </button>
+      <div className="w-full max-w-md mt-6 flex flex-col gap-4">
+        <button
+          onClick={toggleReady}
+          disabled={!currentPlayerName}
+          className="w-full bg-blue-600 px-6 py-3 rounded-xl text-lg font-semibold
+                    hover:bg-purple-500 transition
+                    disabled:bg-zinc-700 disabled:text-zinc-400
+                    disabled:cursor-not-allowed"
+        >
+          {currentPlayer?.isReady ? "Unready" : "Ready"}
+        </button>
+
+        {isHost ? (
+          <>
+            <button
+              onClick={startGame}
+              disabled={!canStartGame}
+              title={!canStartGame ? startMessage : ""}
+              className="w-full bg-green-600 px-6 py-3 rounded-xl text-lg font-semibold
+                        hover:bg-green-500 transition
+                        disabled:bg-zinc-700 disabled:text-zinc-400
+                        disabled:cursor-not-allowed"
+            >
+              Start {gameMode} Game
+            </button>
+
+            {!canStartGame && (
+              <p className="text-sm text-center text-gray-400">
+                {startMessage}
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm text-gray-400">
+              Waiting for the host to start the game...
+            </p>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Players ready:{" "}
+              {players.filter((player) => player.isReady).length} / {players.length}
+            </p>
+          </div>
+        )}
+      </div>
 
     </main>
   );
