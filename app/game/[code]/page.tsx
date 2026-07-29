@@ -12,7 +12,8 @@ type GamePageProps = {
 type GamePlayer = {
   id: string;
   name: string;
-  role: "imposter" | "crewmate";
+  role: "imposter" | "innocent";
+  isHost: boolean;
 };
 
 type GameState = {
@@ -26,6 +27,14 @@ type GameState = {
   round: number;
   spokenPlayers: number[];
   votes?: Record<string, string>;
+
+  roundMessage?: string;
+  voteResults?: {
+    voter: string;
+    target: string;
+  }[];
+
+  playAgainVotes?: Record<string, boolean>;
   players: GamePlayer[];
   votedPlayerId?: string;
   votedPlayerName?: string;
@@ -116,9 +125,27 @@ export default function GamePage({ params }: GamePageProps) {
     }
   }, [gameState?.phase]);
 
+  useEffect(() => {
+    if (gameState?.phase === "discussion") {
+      setCardOpened(false);
+    }
+  }, [
+    gameState?.phase,
+    gameState?.word,
+    gameState?.round,
+  ]);
+
   const currentPlayer = gameState?.players.find(
     (player) => player.id === socket.id
   );
+
+  const hasPressedPlayAgain = Boolean(
+    gameState?.playAgainVotes?.[socket.id || ""]
+  );
+
+  const playAgainCount = Object.keys(
+    gameState?.playAgainVotes || {}
+  ).length;
 
   if (!gameState || !currentPlayer) {
     return (
@@ -142,7 +169,7 @@ export default function GamePage({ params }: GamePageProps) {
   if (gameState.phase === "voting") {
     return (
       <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
-        <h1 className="text-5xl font-bold mb-6">Voting Phase</h1>
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-6 text-center">Voting Phase</h1>
 
         <p className="text-xl text-gray-400 mb-8">
           Round {gameState.round} is complete.
@@ -152,12 +179,17 @@ export default function GamePage({ params }: GamePageProps) {
           Votes submitted: {Object.keys(gameState.votes || {}).length} / {gameState.players.length}
         </p>
 
-        <div className="flex flex-col gap-3 w-80">
+        <div className="flex flex-col gap-3 w-full max-w-sm">
           {gameState.players.map((player) => (
             <button
               key={player.id}
               onClick={() => setSelectedVote(player.id)}
-              className={`px-4 py-3 rounded-xl border ${
+              disabled={hasSubmittedVote}
+              className={`px-4 py-3 rounded-xl border transition ${
+                hasSubmittedVote
+                  ? "cursor-not-allowed opacity-60"
+                  : "hover:bg-zinc-700"
+              } ${
                 selectedVote === player.id
                   ? "bg-blue-600 border-blue-400"
                   : "bg-zinc-800 border-zinc-700"
@@ -169,7 +201,12 @@ export default function GamePage({ params }: GamePageProps) {
 
           <button
             onClick={() => setSelectedVote("skip")}
-            className={`px-4 py-3 rounded-xl border ${
+            disabled={hasSubmittedVote}
+            className={`px-4 py-3 rounded-xl border transition ${
+              hasSubmittedVote
+                ? "cursor-not-allowed opacity-60"
+                : "hover:bg-zinc-700"
+            } ${
               selectedVote === "skip"
                 ? "bg-blue-600 border-blue-400"
                 : "bg-zinc-800 border-zinc-700"
@@ -205,7 +242,7 @@ export default function GamePage({ params }: GamePageProps) {
             socket.emit("return-to-lobby", { code });
             router.push(`/lobby/${code}`);
           }}
-          className="mt-8 bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
+          className="mt-6 w-full max-w-sm bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
         >
           Return to Lobby
         </button>
@@ -251,15 +288,73 @@ export default function GamePage({ params }: GamePageProps) {
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            socket.emit("return-to-lobby", { code });
-            router.push(`/lobby/${code}`);
-          }}
-          className="bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
-        >
-          Return to Lobby
-        </button>
+        {/* Vote summary */}
+        {gameState.voteResults &&
+          gameState.voteResults.length > 0 && (
+            <div className="w-full max-w-sm mb-6">
+              <h2 className="text-xl font-semibold text-center mb-3">
+                Vote Summary
+              </h2>
+
+              <div className="flex flex-col gap-2">
+                {gameState.voteResults.map((vote, index) => (
+                  <div
+                    key={`${vote.voter}-${vote.target}-${index}`}
+                    className="flex items-center justify-between gap-3 bg-zinc-800 rounded-xl px-4 py-3"
+                  >
+                    <span className="font-medium truncate">
+                      {vote.voter}
+                    </span>
+
+                    <span
+                      className={
+                        vote.target === "Skip"
+                          ? "text-yellow-400"
+                          : vote.target === gameState.votedPlayerName
+                          ? "text-red-400"
+                          : "text-gray-400"
+                      }
+                    >
+                      → {vote.target}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        <div className="w-full max-w-sm flex flex-col gap-3">
+          <p className="text-sm text-center text-gray-400">
+            Ready to play again: {playAgainCount} /{" "}
+            {gameState.players.length}
+          </p>
+
+          <button
+            onClick={() => {
+              socket.emit("play-again", { code });
+            }}
+            disabled={hasPressedPlayAgain}
+            className={`w-full px-6 py-3 rounded-xl font-semibold transition ${
+              hasPressedPlayAgain
+                ? "bg-green-800 text-green-200 cursor-not-allowed"
+                : "bg-green-600 hover:bg-green-500"
+            }`}
+          >
+            {hasPressedPlayAgain
+              ? "✓ Ready to Play Again"
+              : "Play Again"}
+          </button>
+
+          <button
+            onClick={() => {
+              socket.emit("return-to-lobby", { code });
+              router.push(`/lobby/${code}`);
+            }}
+            className="w-full bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
+          >
+            Return to Lobby
+          </button>
+        </div>
       </main>
     );
   }
@@ -287,6 +382,46 @@ export default function GamePage({ params }: GamePageProps) {
           <p className="text-base sm:text-lg text-gray-400 mb-2">
             Round {gameState.round}
           </p>
+
+          {gameState.roundMessage && (
+            <div className="w-full max-w-sm mb-4 rounded-xl border border-yellow-500 bg-yellow-500/10 px-4 py-3 text-center">
+              <p className="font-semibold text-yellow-300">
+                {gameState.roundMessage}
+              </p>
+            </div>
+          )}
+
+        {gameState.roundMessage &&
+          gameState.voteResults &&
+          gameState.voteResults.length > 0 && (
+            <div className="w-full max-w-sm mb-4">
+              <p className="text-sm text-gray-400 mb-2">
+                Previous Vote
+              </p>
+
+              <div className="flex flex-col gap-2">
+                {gameState.voteResults.map((vote, index) => (
+                  <div
+                    key={`${vote.voter}-${vote.target}-${index}`}
+                    className="flex items-center justify-between gap-3 bg-zinc-800 rounded-xl px-4 py-2 text-sm"
+                  >
+                    <span className="font-medium truncate">
+                      {vote.voter}
+                    </span>
+                    <span
+                      className={
+                        vote.target === "Skip"
+                          ? "text-yellow-400"
+                          : "text-gray-400"
+                      }
+                    >
+                      → {vote.target}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <p className="text-xl sm:text-2xl font-bold mb-4">
             Current Turn:{" "}

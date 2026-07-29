@@ -4,7 +4,16 @@ import { Server } from "socket.io";
 const lobbies: Record<string, any> = {};
 
 //helper function to assist with voting logic
-function startNextRound(lobby: any) {
+type VoteResult = {
+  voter: string;
+  target: string;
+};
+
+function startNextRound(
+  lobby: any,
+  roundMessage: string,
+  voteResults: VoteResult[]
+) {
   const totalPlayers = lobby.gameState.players.length;
 
   lobby.gameState.round += 1;
@@ -13,7 +22,11 @@ function startNextRound(lobby: any) {
     Math.floor(Math.random() * totalPlayers);
   lobby.gameState.spokenPlayers = [];
   lobby.gameState.votes = {};
+
+  lobby.gameState.roundMessage = roundMessage;
+  lobby.gameState.voteResults = voteResults;
 }
+
 export function setupSocket(server: any) {
   const io = new Server(server, {
     cors: {
@@ -107,7 +120,19 @@ export function setupSocket(server: any) {
 
         const players = lobby.players;
 
+        const requestingPlayer = players.find(
+          (player: any) => player.id === socket.id
+        );
+
+        if (!requestingPlayer?.isHost) return;
+
         if (players.length < 3) return;
+
+        const everyoneReady = players.every(
+          (player: any) => player.isReady
+        );
+
+        if (!everyoneReady) return;
 
         const categories = {
           Food: ["Pizza", "Burger", "Taco"],
@@ -145,7 +170,7 @@ export function setupSocket(server: any) {
           players: players.map((player: any, index: number) => ({
             ...player,
             location:"game",
-            role: index === imposterIndex ? "imposter" : "crewmate",
+            role: index === imposterIndex ? "imposter" : "innocent",
           })),
         };
       io.to(code).emit("game-started", lobby);
@@ -159,7 +184,20 @@ export function setupSocket(server: any) {
 
       const totalPlayers = lobby.gameState.players.length;
 
-      lobby.gameState.spokenPlayers.push(lobby.gameState.currentTurn);
+      const activePlayer =
+        lobby.gameState.players[lobby.gameState.currentTurn];
+
+      if (activePlayer?.id !== socket.id) return;
+
+      if (
+        !lobby.gameState.spokenPlayers.includes(
+          lobby.gameState.currentTurn
+        )
+      ) {
+        lobby.gameState.spokenPlayers.push(
+          lobby.gameState.currentTurn
+        );
+      }
 
       if (lobby.gameState.spokenPlayers.length >= totalPlayers) {
         lobby.gameState.phase = "voting";
@@ -188,6 +226,14 @@ export function setupSocket(server: any) {
 
       if (!voter) return;
 
+      const validTarget =
+      vote === "skip" ||
+      lobby.gameState.players.some(
+        (player: any) => player.id === vote
+      );
+
+      if (!validTarget) return;
+
       if (!lobby.gameState.votes) {
         lobby.gameState.votes = {};
       }
@@ -202,6 +248,30 @@ export function setupSocket(server: any) {
       const voteCount = Object.keys(lobby.gameState.votes).length;
       const totalPlayers = lobby.gameState.players.length;
 
+      const voteResults = Object.entries(
+        lobby.gameState.votes
+      ).map(([voterId, targetId]) => {
+        const voter = lobby.gameState.players.find(
+          (player: any) => player.id === voterId
+        );
+
+        const target =
+          targetId === "skip"
+            ? undefined
+            : lobby.gameState.players.find(
+                (player: any) => player.id === targetId
+              );
+
+        return {
+          voter: voter?.name || "Unknown Player",
+          target:
+            targetId === "skip"
+              ? "Skip"
+              : target?.name || "Unknown Player",
+        };
+      });
+
+      lobby.gameState.voteResults = voteResults;
       if (voteCount < totalPlayers) {
         io.to(code).emit("lobby-update", lobby);
         return;
@@ -222,7 +292,12 @@ export function setupSocket(server: any) {
 
       // Tie vote
       if (highestVotes.length > 1) {
-        startNextRound(lobby);
+        startNextRound(
+          lobby,
+          "The vote ended in a tie. Discussion continues.",
+          voteResults
+        );
+
         io.to(code).emit("lobby-update", lobby);
         return;
       }
@@ -231,7 +306,12 @@ export function setupSocket(server: any) {
 
       // Skip vote won
       if (winningVote === "skip") {
-        startNextRound(lobby);
+        startNextRound(
+          lobby,
+          "The group voted to skip. Discussion continues.",
+          voteResults
+        );
+
         io.to(code).emit("lobby-update", lobby);
         return;
       }
@@ -240,14 +320,118 @@ export function setupSocket(server: any) {
         (player: any) => player.id === winningVote
       );
 
+      lobby.gameState.roundMessage = undefined;
+      lobby.gameState.voteResults = voteResults;
       lobby.gameState.phase = "results";
+
       lobby.gameState.votedPlayerId = winningVote;
       lobby.gameState.votedPlayerName =
         votedPlayer?.name || "Unknown Player";
       lobby.gameState.votedPlayerRole =
         votedPlayer?.role || "innocent";
-      lobby.gameState.crewmatesWon =
+      lobby.gameState.innocentsWin =
         votedPlayer?.role === "imposter";
+
+      io.to(code).emit("lobby-update", lobby);
+    });
+
+    //play again
+    socket.on("play-again", ({ code }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby?.gameState) return;
+      if (lobby.gameState.phase !== "results") return;
+
+      const player = lobby.gameState.players.find(
+        (player: any) => player.id === socket.id
+      );
+
+      if (!player) return;
+
+      if (!lobby.gameState.playAgainVotes) {
+        lobby.gameState.playAgainVotes = {};
+      }
+
+      // Prevent duplicate Play Again submissions
+      if (lobby.gameState.playAgainVotes[socket.id]) {
+        return;
+      }
+
+      lobby.gameState.playAgainVotes[socket.id] = true;
+
+      const readyCount = Object.keys(
+        lobby.gameState.playAgainVotes
+      ).length;
+
+      const totalPlayers = lobby.gameState.players.length;
+
+      // Update everyone while waiting
+      if (readyCount < totalPlayers) {
+        io.to(code).emit("lobby-update", lobby);
+        return;
+      }
+
+      // Everyone pressed Play Again
+      const players = lobby.players;
+
+      const categories = {
+        Food: ["Pizza", "Burger", "Taco"],
+        Animals: ["Tiger", "Elephant", "Panda"],
+        Movies: ["Shrek", "Titanic", "Avatar"],
+      };
+
+      const categoryNames = Object.keys(categories);
+
+      const randomCategory =
+        categoryNames[
+          Math.floor(Math.random() * categoryNames.length)
+        ];
+
+      const words =
+        categories[randomCategory as keyof typeof categories];
+
+      const randomWord =
+        words[Math.floor(Math.random() * words.length)];
+
+      const imposterIndex =
+        Math.floor(Math.random() * players.length);
+
+      const imposterMode =
+        lobby.settings?.imposter?.imposterMode || "no-word";
+
+      const similarWord =
+        words.find((word) => word !== randomWord) || "Mystery";
+
+      const startingPlayer =
+        Math.floor(Math.random() * players.length);
+
+      lobby.gameState = {
+        mode: lobby.settings?.mode || "imposter",
+        category: randomCategory,
+        word: randomWord,
+        imposterMode,
+        imposterWord: similarWord,
+        phase: "discussion",
+        currentTurn: startingPlayer,
+        round: 1,
+        spokenPlayers: [],
+
+        votes: {},
+        roundMessage: undefined,
+        voteResults: [],
+        playAgainVotes: {},
+
+        players: players.map(
+          (player: any, index: number) => ({
+            ...player,
+            location: "game",
+            role:
+              index === imposterIndex
+                ? "imposter"
+                : "innocent",
+          })
+        ),
+      };
 
       io.to(code).emit("lobby-update", lobby);
     });
@@ -267,6 +451,18 @@ export function setupSocket(server: any) {
       player.location = "lobby";
       player.isReady = false;
 
+      if (lobby.gameState?.players) {
+        lobby.gameState.players =
+          lobby.gameState.players.filter(
+            (gamePlayer: any) =>
+              gamePlayer.id !== socket.id
+          );
+
+        if (lobby.gameState.playAgainVotes) {
+          delete lobby.gameState.playAgainVotes[socket.id];
+        }
+      }
+      
       io.to(code).emit("lobby-update", lobby);
     })
     

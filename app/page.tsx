@@ -16,6 +16,8 @@ function generateRoomCode() {
 
 export default function Home() {
   const [roomCode, setRoomCode] = useState("");
+  const [error, setError] = useState("");
+
   const router = useRouter();
 
   function createLobby() {
@@ -24,17 +26,22 @@ export default function Home() {
   }
 
   function joinLobby() {
-    if (!roomCode) {
-      alert("Enter a room code");
+    const trimmedCode = roomCode.trim().toUpperCase();
+
+    if (!trimmedCode) {
+      setError("Please enter a room code.");
       return;
     }
 
-    router.push(`/lobby/${roomCode.toUpperCase()}`);
+    setError("");
+    router.push(`/lobby/${trimmedCode}`);
   }
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-      <h1 className="text-6xl font-bold mb-4">HiddenParty.IO</h1>
+      <h1 className="text-6xl font-bold mb-4">
+        HiddenParty.IO
+      </h1>
 
       <p className="text-xl text-gray-400 mb-8">
         Social deduction games with friends.
@@ -60,9 +67,22 @@ export default function Home() {
         type="text"
         placeholder="Enter Room Code"
         value={roomCode}
-        onChange={(e) => setRoomCode(e.target.value)}
-        className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white outline-none"
+        onChange={(e) => {
+          setRoomCode(e.target.value.toUpperCase());
+
+          if (error) {
+            setError("");
+          }
+        }}
+        maxLength={5}
+        className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white outline-none uppercase tracking-widest"
       />
+
+      {error && (
+        <p className="mt-3 text-sm text-red-400">
+          {error}
+        </p>
+      )}
     </main>
   );
 }
