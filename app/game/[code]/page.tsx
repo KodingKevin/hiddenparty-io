@@ -3,6 +3,8 @@
 import { use, useEffect, useState } from "react";
 import { socket } from "@/src/library/socket";
 import { useRouter } from "next/navigation";
+import { getPlayerId } from "@/src/library/playerId";
+
 type GamePageProps = {
   params: Promise<{
     code: string;
@@ -57,26 +59,46 @@ export default function GamePage({ params }: GamePageProps) {
   
   const [hasSubmittedVote, setHasSubmittedVote] = useState(false);
 
+  const [playerId, setPlayerId] = useState("");
+
   useEffect(() => {
+    const storedPlayerId = getPlayerId();
+
+    setPlayerId(storedPlayerId);
     socket.connect();
+
+    socket.emit("join-lobby", {
+      code,
+      playerName: "",
+      playerId: storedPlayerId,
+    });
 
     socket.emit("get-lobby", {
       code,
+      playerId: storedPlayerId,
     });
 
-    socket.on("lobby-update", (lobby) => {
-      if (lobby.gameState) {
-        setGameState(lobby.gameState);
+    const handleLobbyUpdate = (updatedLobby: any) => {
+      console.log("Game lobby update:", updatedLobby);
+
+      if (!updatedLobby?.gameState) {
+        router.push(`/lobby/${code}`);
+        return;
       }
-    });
 
-    socket.on("return-to-lobby", () => {
+      setGameState(updatedLobby.gameState);
+    };
+
+    const handleReturnToLobby = () => {
       router.push(`/lobby/${code}`);
-    })
-  
+    };
+
+    socket.on("lobby-update", handleLobbyUpdate);
+    socket.on("return-to-lobby", handleReturnToLobby);
+
     return () => {
-      socket.off("lobby-update");
-      socket.off("return-to-lobby");
+      socket.off("lobby-update", handleLobbyUpdate);
+      socket.off("return-to-lobby", handleReturnToLobby);
     };
   }, [code, router]);
 
@@ -95,7 +117,7 @@ export default function GamePage({ params }: GamePageProps) {
           const activePlayer =
             gameState.players[gameState.currentTurn];
 
-          if (activePlayer?.id === socket.id) {
+          if (activePlayer?.id === playerId) {
             socket.emit("next-turn", {
               code,
             });
@@ -136,11 +158,11 @@ export default function GamePage({ params }: GamePageProps) {
   ]);
 
   const currentPlayer = gameState?.players.find(
-    (player) => player.id === socket.id
+    (player) => player.id === playerId
   );
 
   const hasPressedPlayAgain = Boolean(
-    gameState?.playAgainVotes?.[socket.id || ""]
+    gameState?.playAgainVotes?.[playerId || ""]
   );
 
   const playAgainCount = Object.keys(
@@ -366,61 +388,68 @@ export default function GamePage({ params }: GamePageProps) {
   }
 
   return (
-    <main className="min-h-dvh bg-black text-white flex items-center justify-center p-3 sm:p-4 overflow-x-hidden">
-      <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+    <main className="min-h-dvh bg-black text-white p-3 sm:p-4 overflow-x-hidden">
+
+      {/* Header */}
+      <div className="w-full flex flex-col items-center text-center mb-8">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-3">
+          HiddenParty.IO
+        </h1>
+
+        <p className="text-base sm:text-xl text-gray-400 mb-2">
+          Category: {gameState.category}
+        </p>
+
+        <p className="text-base sm:text-lg text-gray-400 mb-2">
+          Round {gameState.round}
+        </p>
+
+        {gameState.roundMessage && (
+          <div className="w-full max-w-xl rounded-xl border border-yellow-500 bg-yellow-500/10 px-4 py-3 text-center">
+            <p className="font-semibold text-yellow-300">
+              {gameState.roundMessage}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Main content */}
+      <div className="w-full max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
 
         {/* LEFT SIDE */}
         <section className="flex flex-col items-center text-center">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-3">
-            HiddenParty.IO
-          </h1>
 
-          <p className="text-base sm:text-xl text-gray-400 mb-2">
-            Category: {gameState.category}
-          </p>
+          {gameState.roundMessage &&
+            gameState.voteResults &&
+            gameState.voteResults.length > 0 && (
+              <details className="w-full max-w-xl mb-6">
+                <summary className="cursor-pointer text-sm text-gray-400 hover:text-white text-center">
+                  View previous vote
+                </summary>
 
-          <p className="text-base sm:text-lg text-gray-400 mb-2">
-            Round {gameState.round}
-          </p>
-
-          {gameState.roundMessage && (
-            <div className="w-full max-w-sm mb-4 rounded-xl border border-yellow-500 bg-yellow-500/10 px-4 py-3 text-center">
-              <p className="font-semibold text-yellow-300">
-                {gameState.roundMessage}
-              </p>
-            </div>
-          )}
-
-        {gameState.roundMessage &&
-          gameState.voteResults &&
-          gameState.voteResults.length > 0 && (
-            <div className="w-full max-w-sm mb-4">
-              <p className="text-sm text-gray-400 mb-2">
-                Previous Vote
-              </p>
-
-              <div className="flex flex-col gap-2">
-                {gameState.voteResults.map((vote, index) => (
-                  <div
-                    key={`${vote.voter}-${vote.target}-${index}`}
-                    className="flex items-center justify-between gap-3 bg-zinc-800 rounded-xl px-4 py-2 text-sm"
-                  >
-                    <span className="font-medium truncate">
-                      {vote.voter}
-                    </span>
-                    <span
-                      className={
-                        vote.target === "Skip"
-                          ? "text-yellow-400"
-                          : "text-gray-400"
-                      }
-                    >
-                      → {vote.target}
-                    </span>
+                <div className="mt-3 rounded-xl bg-zinc-900 border border-zinc-700 p-4">
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {gameState.voteResults.map((vote, index) => (
+                      <div
+                        key={`${vote.voter}-${vote.target}-${index}`}
+                        className="rounded-lg bg-zinc-800 px-3 py-2 text-sm"
+                      >
+                        <span className="font-semibold">{vote.voter}</span>
+                        <span className="text-gray-400"> → </span>
+                        <span
+                          className={
+                            vote.target === "Skip"
+                              ? "text-yellow-400"
+                              : "text-gray-300"
+                          }
+                        >
+                          {vote.target}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              </details>
           )}
 
           <p className="text-xl sm:text-2xl font-bold mb-4">
@@ -443,7 +472,7 @@ export default function GamePage({ params }: GamePageProps) {
             </p>
           </div>
 
-          {/* Turn order */}
+          {/* Turn Order */}
           <div className="text-center w-full max-w-sm">
             <p className="text-sm text-gray-400 mb-2">
               Turn Order
@@ -476,6 +505,7 @@ export default function GamePage({ params }: GamePageProps) {
 
         {/* RIGHT SIDE */}
         <section className="flex flex-col items-center">
+
           {/* Envelope */}
           <div
             onClick={() => setCardOpened(!cardOpened)}
@@ -484,9 +514,7 @@ export default function GamePage({ params }: GamePageProps) {
             {!cardOpened ? (
               <div className="relative w-[85vw] max-w-80 h-44 sm:h-52 bg-zinc-900 border-4 border-zinc-700 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-full border-t-[90px] border-t-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-
                 <div className="absolute bottom-0 left-0 w-full h-full border-b-[90px] border-b-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-
                 <h2 className="z-10 text-2xl sm:text-3xl font-bold">
                   Open Envelope
                 </h2>
@@ -520,23 +548,20 @@ export default function GamePage({ params }: GamePageProps) {
             )}
           </div>
 
-          {/* Finish turn */}
+          {/* Finish Turn */}
           <button
             onClick={nextTurn}
             disabled={
-              gameState.players[gameState.currentTurn]?.id !==
-              socket.id
+              gameState.players[gameState.currentTurn]?.id !== playerId
             }
             className="mt-6 w-full max-w-80 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
           >
-            {gameState.players[gameState.currentTurn]?.id === socket.id
+            {gameState.players[gameState.currentTurn]?.id === playerId
               ? "Finish Turn"
-              : `Waiting for ${
-                  gameState.players[gameState.currentTurn]?.name
-                }`}
+              : `Waiting for ${gameState.players[gameState.currentTurn]?.name}`}
           </button>
 
-          {/* Return to lobby */}
+          {/* Return to Lobby */}
           <button
             onClick={() => {
               socket.emit("return-to-lobby", { code });
@@ -546,8 +571,9 @@ export default function GamePage({ params }: GamePageProps) {
           >
             Return to Lobby
           </button>
+
         </section>
       </div>
     </main>
   );
-  }
+}

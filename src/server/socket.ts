@@ -50,49 +50,82 @@ export function setupSocket(server: any) {
     });
 
     // Joining a lobby
-    socket.on("join-lobby", ({ code, playerName }) => {
-    if (!lobbies[code]) {
-        lobbies[code] = {
-        players: [],
-        settings: {},
-        };
-    }
+    socket.on(
+      "join-lobby",
+      ({ code, playerName, playerId }) => {
+        if (!lobbies[code]) {
+          lobbies[code] = {
+            players: [],
+            settings: {},
+          };
+        }
 
-    const existingPlayer = lobbies[code].players.find(
-        (player: any) => player.id === socket.id
-    );
+        if (!playerId) return;
 
-    if (existingPlayer) {
-        existingPlayer.name =
-        playerName?.trim() || existingPlayer.name;
-    } else {
-        const playerNumber = lobbies[code].players.length + 1;
-
-        lobbies[code].players.push({
-        id: socket.id,
-        name: playerName?.trim() || `Player ${playerNumber}`,
-        isReady: false,
-        isHost: lobbies[code].players.length === 0,
-        location: "lobby",
-        });
-    }
-
-    socket.join(code);
-
-    io.to(code).emit("lobby-update", lobbies[code]);
-
-    console.log(lobbies);
-    });
-
-    //to sync up settings through the server
-    socket.on("update-settings", ({code, settings}) => {
         const lobby = lobbies[code];
 
-        if(!lobby) return;
+        const existingPlayer = lobby.players.find(
+          (player: any) => player.id === playerId
+        );
 
-        lobby.settings = settings;
+        if (existingPlayer) {
+          existingPlayer.name =
+            playerName?.trim() || existingPlayer.name;
 
-        io.to(code).emit("lobby-update", lobby);
+          existingPlayer.socketId = socket.id;
+          existingPlayer.connected = true;
+
+          if (lobby.gameState?.players) {
+            const existingGamePlayer =
+              lobby.gameState.players.find(
+                (player: any) =>
+                  player.id === playerId
+              );
+
+            if (existingGamePlayer) {
+              existingGamePlayer.socketId = socket.id;
+              existingGamePlayer.connected = true;
+              existingGamePlayer.name =
+                existingPlayer.name;
+            }
+          }
+        } else {
+          const playerNumber =
+            lobby.players.length + 1;
+
+          lobby.players.push({
+            id: playerId,
+            socketId: socket.id,
+            name:
+              playerName?.trim() ||
+              `Player ${playerNumber}`,
+            isReady: false,
+            isHost: lobby.players.length === 0,
+            location: "lobby",
+            connected: true,
+          });
+        }
+
+        socket.join(code);
+
+        io.to(code).emit(
+          "lobby-update",
+          lobby
+        );
+
+        console.log(lobbies);
+      }
+    );
+
+    // Sync settings through the server
+    socket.on("update-settings", ({ code, settings }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      lobby.settings = settings;
+
+      io.to(code).emit("lobby-update", lobby);
     });
 
     // Toggle ready status
@@ -102,7 +135,8 @@ export function setupSocket(server: any) {
       if (!lobby) return;
 
       const player = lobby.players.find(
-        (player: any) => player.id === socket.id
+        (player: any) =>
+          player.socketId === socket.id
       );
 
       if (!player) return;
@@ -118,10 +152,12 @@ export function setupSocket(server: any) {
 
         if (!lobby) return;
 
-        const players = lobby.players;
+        const players = lobby.players.filter(
+          (player: any) => player.connected !== false
+        );
 
         const requestingPlayer = players.find(
-          (player: any) => player.id === socket.id
+          (player: any) => player.socketId === socket.id
         );
 
         if (!requestingPlayer?.isHost) return;
@@ -167,6 +203,12 @@ export function setupSocket(server: any) {
           currentTurn: startingPlayer,
           round: 1,
           spokenPlayers: [],
+
+          votes: {},
+          roundMessage: undefined,
+          voteResults: [],
+          playAgainVotes: {},
+
           players: players.map((player: any, index: number) => ({
             ...player,
             location:"game",
@@ -174,7 +216,7 @@ export function setupSocket(server: any) {
           })),
         };
       io.to(code).emit("game-started", lobby);
-    })
+    });
     
     //next turn event
     socket.on("next-turn", ({ code }) => {
@@ -187,7 +229,7 @@ export function setupSocket(server: any) {
       const activePlayer =
         lobby.gameState.players[lobby.gameState.currentTurn];
 
-      if (activePlayer?.id !== socket.id) return;
+      if (activePlayer?.socketId !== socket.id) return;
 
       if (
         !lobby.gameState.spokenPlayers.includes(
@@ -221,7 +263,7 @@ export function setupSocket(server: any) {
       if (lobby.gameState.phase !== "voting") return;
 
       const voter = lobby.gameState.players.find(
-        (player: any) => player.id === socket.id
+        (player: any) => player.socketId === socket.id
       );
 
       if (!voter) return;
@@ -239,11 +281,11 @@ export function setupSocket(server: any) {
       }
 
       // Prevent a player from voting more than once
-      if (lobby.gameState.votes[socket.id]) {
+      if (lobby.gameState.votes[voter.id]) {
         return;
       }
 
-      lobby.gameState.votes[socket.id] = vote;
+      lobby.gameState.votes[voter.id] = vote;
 
       const voteCount = Object.keys(lobby.gameState.votes).length;
       const totalPlayers = lobby.gameState.players.length;
@@ -343,7 +385,7 @@ export function setupSocket(server: any) {
       if (lobby.gameState.phase !== "results") return;
 
       const player = lobby.gameState.players.find(
-        (player: any) => player.id === socket.id
+        (player: any) => player.socketId === socket.id
       );
 
       if (!player) return;
@@ -353,11 +395,11 @@ export function setupSocket(server: any) {
       }
 
       // Prevent duplicate Play Again submissions
-      if (lobby.gameState.playAgainVotes[socket.id]) {
+      if (lobby.gameState.playAgainVotes[player.id]) {
         return;
       }
 
-      lobby.gameState.playAgainVotes[socket.id] = true;
+      lobby.gameState.playAgainVotes[player.id] = true;
 
       const readyCount = Object.keys(
         lobby.gameState.playAgainVotes
@@ -372,7 +414,9 @@ export function setupSocket(server: any) {
       }
 
       // Everyone pressed Play Again
-      const players = lobby.players;
+      const players = lobby.players.filter(
+        (player: any) => player.connected !== false
+      );
 
       const categories = {
         Food: ["Pizza", "Burger", "Taco"],
@@ -443,7 +487,7 @@ export function setupSocket(server: any) {
       if (!lobby) return;
 
       const player = lobby.players.find(
-        (player : any) => player.id === socket.id
+        (player : any) => player.socketId === socket.id
       );
 
       if (!player) return;
@@ -455,44 +499,235 @@ export function setupSocket(server: any) {
         lobby.gameState.players =
           lobby.gameState.players.filter(
             (gamePlayer: any) =>
-              gamePlayer.id !== socket.id
+              gamePlayer.id !== player.id
           );
 
         if (lobby.gameState.playAgainVotes) {
-          delete lobby.gameState.playAgainVotes[socket.id];
+          delete lobby.gameState.playAgainVotes[player.id];
         }
       }
       
       io.to(code).emit("lobby-update", lobby);
-    })
+    });
     
-    // Disconnect handling
-    socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
+  // Disconnect handling
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
 
-      for (const code in lobbies) {
-        const leavingPlayer = lobbies[code].players.find(
-          (player: any) => player.id === socket.id
+    for (const code in lobbies) {
+      const lobby = lobbies[code];
+
+      const leavingPlayer = lobby.players.find(
+        (player: any) =>
+          player.socketId === socket.id
+      );
+
+      // This socket was not part of this lobby
+      if (!leavingPlayer) {
+        continue;
+      }
+
+      const leavingPlayerId = leavingPlayer.id;
+
+      /*
+      * Do not remove the player immediately.
+      * Mark them disconnected and give them 15 seconds
+      * to reconnect after refreshing.
+      */
+      leavingPlayer.connected = false;
+      leavingPlayer.socketId = null;
+
+      const leavingGamePlayer =
+        lobby.gameState?.players?.find(
+          (player: any) =>
+            player.id === leavingPlayerId
         );
-        if (leavingPlayer?.isHost){
-          lobbies[code].gameStarted = false;
-          lobbies[code].gameState = null;
 
-          lobbies[code].players = lobbies[code].players.map((player: any) => ({
-            ...player,
-            isReady: false,
-            location: "lobby"
-          }));
+      if (leavingGamePlayer) {
+        leavingGamePlayer.connected = false;
+        leavingGamePlayer.socketId = null;
+      }
+
+      io.to(code).emit("lobby-update", lobby);
+
+      setTimeout(() => {
+        const currentLobby = lobbies[code];
+
+        if (!currentLobby) return;
+
+        const currentPlayer =
+          currentLobby.players.find(
+            (player: any) =>
+              player.id === leavingPlayerId
+          );
+
+        // Player was already removed
+        if (!currentPlayer) return;
+
+        // Player reconnected during the grace period
+        if (currentPlayer.connected) {
+          console.log(
+            `${currentPlayer.name} reconnected`
+          );
+
+          return;
         }
 
-        lobbies[code].players = lobbies[code].players.filter(
-          (player: any) => player.id !== socket.id
+        console.log(
+          `${currentPlayer.name} did not reconnect`
         );
 
-        io.to(code).emit("lobby-update", lobbies[code]);
-      }
-    });
+        // Remove player from main lobby list
+        currentLobby.players =
+          currentLobby.players.filter(
+            (player: any) =>
+              player.id !== leavingPlayerId
+          );
+
+        // Host did not reconnect
+        if (currentPlayer.isHost) {
+          currentLobby.gameStarted = false;
+          currentLobby.gameState = null;
+
+          currentLobby.players =
+            currentLobby.players.map(
+              (player: any, index: number) => ({
+                ...player,
+                isHost: index === 0,
+                isReady: false,
+                location: "lobby",
+              })
+            );
+
+          io.to(code).emit("return-to-lobby");
+          io.to(code).emit(
+            "lobby-update",
+            currentLobby
+          );
+
+          if (currentLobby.players.length === 0) {
+            delete lobbies[code];
+          }
+
+          return;
+        }
+
+        // Remove non-host from active game
+        if (currentLobby.gameState?.players) {
+          const disconnectedGamePlayerIndex =
+            currentLobby.gameState.players.findIndex(
+              (player: any) =>
+                player.id === leavingPlayerId
+            );
+
+          currentLobby.gameState.players =
+            currentLobby.gameState.players.filter(
+              (player: any) =>
+                player.id !== leavingPlayerId
+            );
+
+          // Remove their vote
+          if (currentLobby.gameState.votes) {
+            delete currentLobby.gameState.votes[
+              leavingPlayerId
+            ];
+
+            // Remove votes targeting them
+            for (
+              const voterId in
+              currentLobby.gameState.votes
+            ) {
+              if (
+                currentLobby.gameState.votes[
+                  voterId
+                ] === leavingPlayerId
+              ) {
+                delete currentLobby.gameState.votes[
+                  voterId
+                ];
+              }
+            }
+          }
+
+          // Remove their Play Again vote
+          if (
+            currentLobby.gameState.playAgainVotes
+          ) {
+            delete currentLobby.gameState
+              .playAgainVotes[leavingPlayerId];
+          }
+
+          const remainingPlayers =
+            currentLobby.gameState.players.length;
+
+          // End game if fewer than three remain
+          if (remainingPlayers < 3) {
+            currentLobby.gameStarted = false;
+            currentLobby.gameState = null;
+
+            currentLobby.players =
+              currentLobby.players.map(
+                (player: any) => ({
+                  ...player,
+                  isReady: false,
+                  location: "lobby",
+                })
+              );
+
+            io.to(code).emit("return-to-lobby");
+
+            io.to(code).emit(
+              "lobby-update",
+              currentLobby
+            );
+
+            return;
+          }
+
+          // Restart discussion if someone leaves
+          if (
+            currentLobby.gameState.phase ===
+              "discussion" ||
+            currentLobby.gameState.phase ===
+              "voting"
+          ) {
+            currentLobby.gameState.phase =
+              "discussion";
+
+            currentLobby.gameState.currentTurn =
+              Math.floor(
+                Math.random() * remainingPlayers
+              );
+
+            currentLobby.gameState.spokenPlayers =
+              [];
+
+            currentLobby.gameState.votes = {};
+            currentLobby.gameState.voteResults = [];
+
+            currentLobby.gameState.roundMessage =
+              `${currentPlayer.name} disconnected. The round has restarted.`;
+          }
+
+          console.log(
+            `${currentPlayer.name} removed from game at index`,
+            disconnectedGamePlayerIndex
+          );
+        }
+
+        io.to(code).emit(
+          "lobby-update",
+          currentLobby
+        );
+
+        if (currentLobby.players.length === 0) {
+          delete lobbies[code];
+        }
+      }, 15000);
+    }
   });
+
+  }); // close io.on("connection")
 
   return io;
 }

@@ -10,6 +10,8 @@ import { socket } from "@/src/library/socket";
 
 import { useRouter } from "next/navigation";
 
+import { getPlayerId } from "@/src/library/playerId";
+
 // Defines the structure of the props passed into this page.
 type LobbyPageProps = {
   // In Next.js 16, params is now a Promise.
@@ -47,19 +49,28 @@ const [players, setPlayers] = useState<Player[]>([]);
   //stores the updated name into the box
   const [currentPlayerName, setCurrentPlayerName] = useState("");
 
+  //adds player ID state
+  const [playerId, setPlayerId] = useState("");
+
   //limits the name size
   const max_name_length = 16;
 
   useEffect(() => {
+    const storedPlayerId = getPlayerId();
+
+    setPlayerId(storedPlayerId);
+
     socket.connect();
 
     socket.emit("get-lobby", {
       code,
+      playerId: storedPlayerId,
     });
 
     socket.emit("join-lobby", {
       code,
       playerName: "",
+      playerId: storedPlayerId,
     });
 
     socket.on("lobby-update", (lobby) => {
@@ -68,7 +79,8 @@ const [players, setPlayers] = useState<Player[]>([]);
       setPlayers(lobby.players);
 
       const currentPlayerData = lobby.players.find(
-        (player: Player) => player.id === socket.id
+        (player: Player) =>
+          player.id === storedPlayerId
       );
 
       if (currentPlayerData) {
@@ -77,8 +89,15 @@ const [players, setPlayers] = useState<Player[]>([]);
 
       if (lobby.settings?.mode) {
         setGameMode(lobby.settings.mode);
-        setImposterMode(lobby.settings.imposter.imposterMode);
-        setRoleCount(lobby.settings.socialDeduction.roleCount);
+
+        setImposterMode(
+          lobby.settings.imposter?.imposterMode ||
+            "no-word"
+        );
+
+        setRoleCount(
+          lobby.settings.socialDeduction?.roleCount || 2
+        );
       }
     });
 
@@ -92,6 +111,7 @@ const [players, setPlayers] = useState<Player[]>([]);
       socket.off("game-started");
     };
   }, [code, router]);
+
   // Stores the currently selected game mode
   const [gameMode, setGameMode] = useState("imposter");
 
@@ -105,12 +125,12 @@ const [players, setPlayers] = useState<Player[]>([]);
     function addPlayer() {
     const trimmedName = playerName.trim().slice(0, max_name_length);
 
-    if (!trimmedName) return;
+    if (!trimmedName || !playerId) return;
 
     const nameExists = players.some(
-        (player) =>
+      (player) =>
         player.name.toLowerCase() === trimmedName.toLowerCase() &&
-        player.name.toLowerCase() !== currentPlayerName.toLowerCase()
+        player.id !== playerId
     );
 
     if (nameExists) {
@@ -119,11 +139,15 @@ const [players, setPlayers] = useState<Player[]>([]);
     }
 
     setCurrentPlayerName(trimmedName);
+
     socket.emit("join-lobby", {
       code,
       playerName: trimmedName,
+      playerId,
     });
+
     localStorage.setItem(`hiddenparty-name-${code}`, trimmedName);
+
     setPlayerName("");
     }
 
@@ -138,7 +162,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
   // Finds the current player's object in the players array
   const currentPlayer = players.find(
-    (player) => player.name === currentPlayerName
+    (player) => player.id === playerId
   );
 
   const isHost = currentPlayer?.isHost;
@@ -389,7 +413,7 @@ const [players, setPlayers] = useState<Player[]>([]);
               <div
                 key={player.id}
                 className={`bg-zinc-800 px-3 py-2 rounded-xl flex items-center gap-2 ${
-                  player.id === socket.id
+                  player.id === playerId
                     ? "border border-blue-500"
                     : ""
                 }`}
@@ -407,7 +431,7 @@ const [players, setPlayers] = useState<Player[]>([]);
                     {player.name}
                   </p>
 
-                  {player.id === socket.id && (
+                  {player.id === playerId && (
                     <span className="inline-block mt-1 text-[10px] text-gray-400">
                       You
                     </span>
