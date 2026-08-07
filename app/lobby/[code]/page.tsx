@@ -12,6 +12,8 @@ import { useRouter } from "next/navigation";
 
 import { getPlayerId } from "@/src/library/playerId";
 
+import { gameWords } from "@/src/library/gamewords";
+
 // Defines the structure of the props passed into this page.
 type LobbyPageProps = {
   // In Next.js 16, params is now a Promise.
@@ -34,14 +36,16 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   // players = current array
   // setPlayers = function used to update the array
   type Player = {
-    id : string;
-    name : string; 
-    isReady : boolean;
-    isHost : boolean;
+    id: string;
+    socketId?: string;
+    name: string;
+    isReady: boolean;
+    isHost: boolean;
     location: string;
+    connected?: boolean;
   };
 
-const [players, setPlayers] = useState<Player[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
 
   // Stores the text currently typed into the input box.
   const [playerName, setPlayerName] = useState("");
@@ -54,6 +58,11 @@ const [players, setPlayers] = useState<Player[]>([]);
 
   //limits the name size
   const max_name_length = 16;
+
+  //Catagory List
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    Object.keys(gameWords)
+  );
 
   useEffect(() => {
     const storedPlayerId = getPlayerId();
@@ -98,6 +107,10 @@ const [players, setPlayers] = useState<Player[]>([]);
         setRoleCount(
           lobby.settings.socialDeduction?.roleCount || 2
         );
+      }
+
+      if (lobby.settings?.categories){
+        setSelectedCategories(lobby.settings.categories);
       }
     });
 
@@ -169,20 +182,25 @@ const [players, setPlayers] = useState<Player[]>([]);
 
   const allPlayersReady = players.length > 0 && players.every((player) => player.isReady);
 
-  const canStartGame = isHost && players.length >= 3 && allPlayersReady;
+  const canStartGame = isHost && players.length >= 3 
+                       && allPlayersReady&& selectedCategories.length > 0;
 
   let startMessage = "";
 
-  if (!isHost){
+  if (!isHost) {
     startMessage = "Only the host can start the game";
-  } else if (players.length < 3){
+  } else if (players.length < 3) {
     startMessage = "Need at least 3 players to start";
-  } else if (!allPlayersReady){
+  } else if (!allPlayersReady) {
     startMessage = "All players must be ready";
+  } else if (selectedCategories.length === 0) {
+    startMessage = "Select at least one category";
   }
+
   const gameSettings = {
     mode: gameMode,
     players,
+    categories: selectedCategories,
     imposter:{
       imposterMode,
     },
@@ -288,6 +306,82 @@ const [players, setPlayers] = useState<Player[]>([]);
               </div>
             )}
 
+            {/* Category selector */}
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-sm text-gray-400">
+                  Categories
+                </label>
+
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allCategories = Object.keys(gameWords);
+
+                      const newCategories =
+                        selectedCategories.length === allCategories.length
+                          ? []
+                          : allCategories;
+
+                      setSelectedCategories(newCategories);
+
+                      updateSettings({
+                        ...gameSettings,
+                        categories: newCategories,
+                      });
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    {selectedCategories.length === Object.keys(gameWords).length
+                      ? "Clear All"
+                      : "Select All"}
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {Object.keys(gameWords).map((category) => {
+                  const selected = selectedCategories.includes(category);
+
+                  return (
+                    <button
+                      key={category}
+                      type="button"
+                      disabled={!isHost}
+                      onClick={() => {
+                        if (!isHost) return;
+
+                        const newCategories = selected
+                          ? selectedCategories.filter(
+                              (item) => item !== category
+                            )
+                          : [...selectedCategories, category];
+
+                        setSelectedCategories(newCategories);
+
+                        updateSettings({
+                          ...gameSettings,
+                          categories: newCategories,
+                        });
+                      }}
+                      className={`px-3 py-2 rounded-xl border text-sm transition ${
+                        selected
+                          ? "bg-blue-600 border-blue-400 text-white"
+                          : "bg-zinc-800 border-zinc-700 text-gray-400"
+                      } ${
+                        !isHost
+                          ? "cursor-default opacity-70"
+                          : "hover:border-blue-400"
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {(gameMode === "mafia" ||
               gameMode === "werewolf") && (
               <div className="mt-5">
@@ -355,7 +449,7 @@ const [players, setPlayers] = useState<Player[]>([]);
 
             <button
               onClick={toggleReady}
-              disabled={!currentPlayerName}
+              disabled={!currentPlayerName || currentPlayer?.connected === false}
               className="w-full bg-blue-600 px-6 py-3 rounded-xl text-lg font-semibold hover:bg-purple-500 transition disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
             >
               {currentPlayer?.isReady ? "Unready" : "Ready"}
@@ -412,7 +506,11 @@ const [players, setPlayers] = useState<Player[]>([]);
             {players.map((player) => (
               <div
                 key={player.id}
-                className={`bg-zinc-800 px-3 py-2 rounded-xl flex items-center gap-2 ${
+                className={`px-3 py-2 rounded-xl flex items-center gap-2 transition ${
+                  player.connected === false
+                    ? "bg-zinc-900 opacity-60"
+                    : "bg-zinc-800"
+                } ${
                   player.id === playerId
                     ? "border border-blue-500"
                     : ""
@@ -434,6 +532,12 @@ const [players, setPlayers] = useState<Player[]>([]);
                   {player.id === playerId && (
                     <span className="inline-block mt-1 text-[10px] text-gray-400">
                       You
+                    </span>
+                  )}
+
+                  {player.connected === false && (
+                    <span className="inline-block mt-1 text-[10px] text-red-400">
+                      Reconnecting...
                     </span>
                   )}
                 </div>

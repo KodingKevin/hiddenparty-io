@@ -1,5 +1,6 @@
 import { Server } from "socket.io";
 
+import { gameWords } from "../library/gamewords";
 // Stores all active lobbies
 const lobbies: Record<string, any> = {};
 
@@ -170,17 +171,18 @@ export function setupSocket(server: any) {
 
         if (!everyoneReady) return;
 
-        const categories = {
-          Food: ["Pizza", "Burger", "Taco"],
-          Animals: ["Tiger", "Elephant", "Panda"],
-          Movies: ["Shrek", "Titanic", "Avatar"],
-        };
+        const selectedCategories =
+          lobby.settings?.categories?.length > 0
+            ? lobby.settings.categories
+            : Object.keys(gameWords);
 
-        const categoryNames = Object.keys(categories);
+        const categoryNames = selectedCategories.filter(
+          (category: string) => category in gameWords
+        );
 
         const randomCategory = categoryNames[Math.floor(Math.random() * categoryNames.length)];
 
-        const words = categories[randomCategory as keyof typeof categories];
+        const words = gameWords[randomCategory as keyof typeof gameWords];
 
         const randomWord = words[Math.floor(Math.random() * words.length)];
 
@@ -418,21 +420,22 @@ export function setupSocket(server: any) {
         (player: any) => player.connected !== false
       );
 
-      const categories = {
-        Food: ["Pizza", "Burger", "Taco"],
-        Animals: ["Tiger", "Elephant", "Panda"],
-        Movies: ["Shrek", "Titanic", "Avatar"],
-      };
+      const selectedCategories =
+        lobby.settings?.categories?.length > 0
+          ? lobby.settings.categories
+          : Object.keys(gameWords);
 
-      const categoryNames = Object.keys(categories);
-
+      const categoryNames = selectedCategories.filter(
+        (category: string) => category in gameWords
+      );
+      
       const randomCategory =
         categoryNames[
           Math.floor(Math.random() * categoryNames.length)
         ];
 
       const words =
-        categories[randomCategory as keyof typeof categories];
+        gameWords[randomCategory as keyof typeof gameWords];
 
       const randomWord =
         words[Math.floor(Math.random() * words.length)];

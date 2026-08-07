@@ -74,7 +74,12 @@ export default function Home() {
             setError("");
           }
         }}
-        maxLength={5}
+        onKeyDown={(e) => {
+          if (e.key === "Enter"){
+            joinLobby();
+          }
+        }} 
+        maxLength={5} 
         className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white outline-none uppercase tracking-widest"
       />
 

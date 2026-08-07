@@ -388,7 +388,7 @@ export default function GamePage({ params }: GamePageProps) {
   }
 
   return (
-    <main className="min-h-dvh bg-black text-white p-3 sm:p-4 overflow-x-hidden">
+    <main className="min-h-dvh bg-black text-white p-3 sm:p-4 overflow-x-hidden flex flex-col">
 
       {/* Header */}
       <div className="w-full flex flex-col items-center text-center mb-8">
@@ -418,39 +418,6 @@ export default function GamePage({ params }: GamePageProps) {
 
         {/* LEFT SIDE */}
         <section className="flex flex-col items-center text-center">
-
-          {gameState.roundMessage &&
-            gameState.voteResults &&
-            gameState.voteResults.length > 0 && (
-              <details className="w-full max-w-xl mb-6">
-                <summary className="cursor-pointer text-sm text-gray-400 hover:text-white text-center">
-                  View previous vote
-                </summary>
-
-                <div className="mt-3 rounded-xl bg-zinc-900 border border-zinc-700 p-4">
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {gameState.voteResults.map((vote, index) => (
-                      <div
-                        key={`${vote.voter}-${vote.target}-${index}`}
-                        className="rounded-lg bg-zinc-800 px-3 py-2 text-sm"
-                      >
-                        <span className="font-semibold">{vote.voter}</span>
-                        <span className="text-gray-400"> → </span>
-                        <span
-                          className={
-                            vote.target === "Skip"
-                              ? "text-yellow-400"
-                              : "text-gray-300"
-                          }
-                        >
-                          {vote.target}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </details>
-          )}
 
           <p className="text-xl sm:text-2xl font-bold mb-4">
             Current Turn:{" "}
@@ -571,9 +538,46 @@ export default function GamePage({ params }: GamePageProps) {
           >
             Return to Lobby
           </button>
-
         </section>
       </div>
+
+      {/* Previous Vote */}
+      {gameState.roundMessage &&
+        gameState.voteResults &&
+        gameState.voteResults.length > 0 && (
+          <div className="mt-12 pt-6 border-t border-zinc-800 w-full flex flex-col items-center">
+            <p className="text-sm uppercase tracking-wider text-gray-500 mb-4">
+              Previous Round Votes
+            </p>
+
+            <div className="flex flex-wrap justify-center gap-3 max-w-3xl">
+              {gameState.voteResults.map((vote, index) => (
+                <div
+                  key={`${vote.voter}-${vote.target}-${index}`}
+                  className="rounded-full bg-zinc-800 border border-zinc-700 px-4 py-2 text-sm"
+                >
+                  <span className="font-semibold">
+                    {vote.voter}
+                  </span>
+
+                  <span className="text-gray-500">
+                    {" "}→{" "}
+                  </span>
+
+                  <span
+                    className={
+                      vote.target === "Skip"
+                        ? "text-yellow-400"
+                        : "text-gray-300"
+                    }
+                  >
+                    {vote.target}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+      )}
     </main>
   );
 }
