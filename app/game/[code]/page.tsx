@@ -24,7 +24,7 @@ type GameState = {
   word: string;
   imposterMode: string;
   imposterWord: string;
-  phase: "discussion" | "voting" | "results";
+  phase: "discussion" | "voting" | "transition" | "reveal" | "results";
   currentTurn: number;
   round: number;
   spokenPlayers: number[];
@@ -60,6 +60,8 @@ export default function GamePage({ params }: GamePageProps) {
   const [hasSubmittedVote, setHasSubmittedVote] = useState(false);
 
   const [playerId, setPlayerId] = useState("");
+
+  const [transitionCountdown, setTransitionCountdown] = useState(3);
 
   useEffect(() => {
     const storedPlayerId = getPlayerId();
@@ -103,6 +105,29 @@ export default function GamePage({ params }: GamePageProps) {
   }, [code, router]);
 
   useEffect(() => {
+    if (gameState?.phase !== "transition") {
+      return;
+    }
+
+    setTransitionCountdown(3);
+
+    const timer = setInterval(() => {
+      setTransitionCountdown((current) => {
+        if (current <= 1) {
+          clearInterval(timer);
+          return 1;
+        }
+
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [gameState?.phase, gameState?.roundMessage]);
+
+  useEffect(() => {
     if (!gameState || gameState.phase !== "discussion") {
       return;
     }
@@ -135,6 +160,7 @@ export default function GamePage({ params }: GamePageProps) {
     };
   }, [
     code,
+    playerId,
     gameState?.currentTurn,
     gameState?.phase,
     gameState?.players,
@@ -186,6 +212,24 @@ export default function GamePage({ params }: GamePageProps) {
     });
 
     setHasSubmittedVote(true);
+  }
+
+  if (gameState.phase === "transition") {
+    return (
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4">
+        <h1 className="text-3xl sm:text-5xl font-bold text-center mb-5">
+          Next Round
+        </h1>
+
+        <p className="text-lg sm:text-xl text-yellow-300 text-center mb-8">
+          {gameState.roundMessage}
+        </p>
+
+        <p className="text-7xl sm:text-8xl font-bold font-mono">
+          {transitionCountdown}
+        </p>
+      </main>
+    );
   }
 
   if (gameState.phase === "voting") {
@@ -268,6 +312,24 @@ export default function GamePage({ params }: GamePageProps) {
         >
           Return to Lobby
         </button>
+      </main>
+    );
+  }
+
+  if (gameState.phase === "reveal") {
+    return (
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4">
+        <p className="text-lg text-gray-400 mb-4">
+          The group voted out...
+        </p>
+
+        <h1 className="text-4xl sm:text-6xl font-bold text-center">
+          {gameState.votedPlayerName}
+        </h1>
+
+        <p className="mt-8 text-lg text-gray-500">
+          Revealing role...
+        </p>
       </main>
     );
   }

@@ -64,6 +64,14 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     Object.keys(gameWords)
   );
 
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+
+  const [tempCategories, setTempCategories] = useState<string[]>(
+    Object.keys(gameWords)
+  );
+
+  const [imposterCount, setImposterCount] = useState(1);
+
   useEffect(() => {
     const storedPlayerId = getPlayerId();
 
@@ -102,6 +110,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
         setImposterMode(
           lobby.settings.imposter?.imposterMode ||
             "no-word"
+        );
+        
+        setImposterCount(
+          lobby.settings.imposter?.imposterCount || 1
         );
 
         setRoleCount(
@@ -203,7 +215,9 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     categories: selectedCategories,
     imposter:{
       imposterMode,
+      imposterCount,
     },
+
     socialDeduction:{
       roleCount,
     },
@@ -216,6 +230,22 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       code,
       settings: newSetting,
     });
+  }
+
+  function openCategoryModal() {
+    setTempCategories(selectedCategories);
+    setShowCategoryModal(true);
+  }
+
+  function saveCategorySettings() {
+    setSelectedCategories(tempCategories);
+
+    updateSettings({
+      ...gameSettings,
+      categories: tempCategories,
+    });
+
+    setShowCategoryModal(false);
   }
 
   function startGame(){
@@ -247,12 +277,12 @@ export default function LobbyPage({ params }: LobbyPageProps) {
         </div>
 
         {/* Centered Game Mode and controls */}
-        <div className="w-full max-w-2xl mx-auto">
+        <div className="w-full max-w-xl mx-auto">
 
           {/* Game settings */}
-          <section className="w-full bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-            <h2 className="text-2xl font-semibold mb-4">
-              Game Mode
+          <section className="w-full bg-zinc-900 rounded-2xl p-4 border border-zinc-800">
+            <h2 className="text-xl font-semibold mb-3">
+              Game Settings
             </h2>
 
             <select
@@ -268,7 +298,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   mode: newMode,
                 });
               }}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
             >
               <option value="imposter">Imposter</option>
               <option value="mafia">Mafia</option>
@@ -276,8 +306,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             </select>
 
             {gameMode === "imposter" && (
-              <div className="mt-5">
-                <label className="block mb-2 text-sm text-gray-400">
+              <div className="mt-3">
+                <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
                   Imposter Mode
                 </label>
 
@@ -293,11 +323,17 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                       ...gameSettings,
                       imposter: {
                         imposterMode: newImposterMode,
+                        imposterCount,
                       },
                     });
                   }}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
                 >
+                  {[1, 2, 3].map((count) => (
+                    <option key={count} value={count}>
+                      {count}
+                    </option>
+                  ))}
                   <option value="no-word">No Word</option>
                   <option value="similar-word">
                     Similar Word
@@ -306,86 +342,44 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               </div>
             )}
 
-            {/* Category selector */}
-            <div className="mt-6">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm text-gray-400">
-                  Categories
-                </label>
+            <div className="mt-3">
+              <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                Categories
+              </label>
 
-                {isHost && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allCategories = Object.keys(gameWords);
+              <button
+                type="button"
+                disabled={!isHost}
+                onClick={openCategoryModal}
+                className="
+                w-full
+                bg-zinc-800
+                border
+                border-zinc-700
+                rounded-lg
+                px-4
+                py-2
+                sm:py-2.5
+                text-sm
+                sm:text-base
+                transition
+                hover:border-blue-500
+                "
+              >
+                <div className="w-full flex justify-between items-center">
+                  <span>Choose Categories</span>
 
-                      const newCategories =
-                        selectedCategories.length === allCategories.length
-                          ? []
-                          : allCategories;
-
-                      setSelectedCategories(newCategories);
-
-                      updateSettings({
-                        ...gameSettings,
-                        categories: newCategories,
-                      });
-                    }}
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                  >
-                    {selectedCategories.length === Object.keys(gameWords).length
-                      ? "Clear All"
-                      : "Select All"}
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {Object.keys(gameWords).map((category) => {
-                  const selected = selectedCategories.includes(category);
-
-                  return (
-                    <button
-                      key={category}
-                      type="button"
-                      disabled={!isHost}
-                      onClick={() => {
-                        if (!isHost) return;
-
-                        const newCategories = selected
-                          ? selectedCategories.filter(
-                              (item) => item !== category
-                            )
-                          : [...selectedCategories, category];
-
-                        setSelectedCategories(newCategories);
-
-                        updateSettings({
-                          ...gameSettings,
-                          categories: newCategories,
-                        });
-                      }}
-                      className={`px-3 py-2 rounded-xl border text-sm transition ${
-                        selected
-                          ? "bg-blue-600 border-blue-400 text-white"
-                          : "bg-zinc-800 border-zinc-700 text-gray-400"
-                      } ${
-                        !isHost
-                          ? "cursor-default opacity-70"
-                          : "hover:border-blue-400"
-                      }`}
-                    >
-                      {category}
-                    </button>
-                  );
-                })}
-              </div>
+                  <span className="text-sm text-gray-400">
+                    {selectedCategories.length} selected
+                  </span>
+                </div>
+              </button>
             </div>
 
             {(gameMode === "mafia" ||
               gameMode === "werewolf") && (
               <div className="mt-5">
-                <label className="block mb-2 text-sm text-gray-400">
+                <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
                   Special Roles
                 </label>
 
@@ -404,7 +398,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                       },
                     });
                   }}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 outline-none"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
                     (number) => (
@@ -450,7 +444,19 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             <button
               onClick={toggleReady}
               disabled={!currentPlayerName || currentPlayer?.connected === false}
-              className="w-full bg-blue-600 px-6 py-3 rounded-xl text-lg font-semibold hover:bg-purple-500 transition disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
+              className="
+              inline-flex
+              items-center
+              justify-center
+              px-8
+              py-3
+              rounded-xl
+              bg-blue-600
+              hover:bg-blue-500
+              font-semibold
+              mx-auto
+              transition
+              "
             >
               {currentPlayer?.isReady ? "Unready" : "Ready"}
             </button>
@@ -461,9 +467,24 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   onClick={startGame}
                   disabled={!canStartGame}
                   title={!canStartGame ? startMessage : ""}
-                  className="w-full bg-green-600 px-6 py-3 rounded-xl text-lg font-semibold hover:bg-green-500 transition disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
-                >
-                  Start {gameMode} Game
+                  className="
+                    inline-flex
+                    items-center
+                    justify-center
+                    px-8
+                    py-3
+                    rounded-xl
+                    bg-green-600
+                    hover:bg-green-500
+                    font-semibold
+                    mx-auto
+                    transition
+                    disabled:bg-zinc-700
+                    disabled:text-zinc-400
+                    disabled:cursor-not-allowed
+                  "                
+                  > 
+                  Start Game
                 </button>
 
                 {!canStartGame && (
@@ -560,6 +581,79 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           </div>
         </section>
       </div>
+      {showCategoryModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+
+          <div className="w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-2xl font-bold">
+                Categories
+              </h2>
+
+              <button
+                onClick={() => setShowCategoryModal(false)}
+                className="text-2xl text-gray-400 hover:text-white"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+
+              {Object.keys(gameWords).map((category) => {
+
+                const selected =
+                  tempCategories.includes(category);
+
+                return (
+                  <button
+                    key={category}
+                    onClick={() => {
+                      setTempCategories((current) =>
+                        selected
+                          ? current.filter(
+                              (item) => item !== category
+                            )
+                          : [...current, category]
+                      );
+                    }}
+                    className={`px-3 py-3 rounded-xl border ${
+                      selected
+                        ? "bg-blue-600 border-blue-400"
+                        : "bg-zinc-800 border-zinc-700"
+                    }`}
+                  >
+                    {category}
+                  </button>
+                );
+              })}
+
+            </div>
+
+            <div className="flex gap-3 mt-6">
+
+              <button
+                onClick={() => setShowCategoryModal(false)}
+                className="flex-1 bg-zinc-700 rounded-xl py-3"
+              >
+                Cancel
+              </button>
+
+              <button
+                disabled={tempCategories.length === 0}
+                onClick={saveCategorySettings}
+                className="flex-1 bg-blue-600 rounded-xl py-3 disabled:bg-zinc-700"
+              >
+                Save Settings
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
     </main>
   );
 }

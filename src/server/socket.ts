@@ -186,11 +186,35 @@ export function setupSocket(server: any) {
 
         const randomWord = words[Math.floor(Math.random() * words.length)];
 
-        const imposterIndex = Math.floor(Math.random() * players.length);
+        const requestedImposterCount =
+               lobby.settings?.imposter?.imposterCount || 1;
+
+        const maxImposters = Math.max(
+          1,
+          Math.min(
+            requestedImposterCount,
+            players.length - 1
+          )
+        );
+
+        const shuffledIndexes = players
+          .map((_: any, index: number) => index)
+          .sort(() => Math.random() - 0.5);
+
+        const imposterIndexes = new Set(
+          shuffledIndexes.slice(0, maxImposters)
+        );
 
         const imposterMode = lobby.settings?.imposter?.imposterMode || "no-word";
 
-        const similarWord = words.find((word) => word !== randomWord) || "Mystery";
+        const otherWords = words.filter(
+          (word) => word !== randomWord
+        );
+
+        const similarWord =
+          otherWords[
+            Math.floor(Math.random() * otherWords.length)
+          ];
 
         const startingPlayer = Math.floor(Math.random() * players.length);
 
@@ -210,11 +234,12 @@ export function setupSocket(server: any) {
           roundMessage: undefined,
           voteResults: [],
           playAgainVotes: {},
+          eliminatedPlayers: [],
 
           players: players.map((player: any, index: number) => ({
             ...player,
             location:"game",
-            role: index === imposterIndex ? "imposter" : "innocent",
+            role: imposterIndexes.has(index) ? "imposter" : "innocent",
           })),
         };
       io.to(code).emit("game-started", lobby);
@@ -271,10 +296,14 @@ export function setupSocket(server: any) {
       if (!voter) return;
 
       const validTarget =
-      vote === "skip" ||
-      lobby.gameState.players.some(
-        (player: any) => player.id === vote
-      );
+        vote === "skip" ||
+        lobby.gameState.players.some(
+          (player: any) =>
+            player.id === vote &&
+            !lobby.gameState.eliminatedPlayers?.includes(
+              player.id
+            )
+        );
 
       if (!validTarget) return;
 
@@ -336,13 +365,28 @@ export function setupSocket(server: any) {
 
       // Tie vote
       if (highestVotes.length > 1) {
-        startNextRound(
-          lobby,
-          "The vote ended in a tie. Discussion continues.",
-          voteResults
-        );
+        lobby.gameState.phase = "transition";
+        lobby.gameState.roundMessage =
+          "The vote ended in a tie. Next round starting...";
 
+        lobby.gameState.voteResults = voteResults;
+
+        // Show transition screen immediately
         io.to(code).emit("lobby-update", lobby);
+
+        setTimeout(() => {
+          // Make sure the lobby/game still exists
+          if (!lobbies[code]?.gameState) return;
+
+          startNextRound(
+            lobby,
+            "The vote ended in a tie. Discussion continues.",
+            voteResults
+          );
+
+          io.to(code).emit("lobby-update", lobby);
+        }, 3000);
+
         return;
       }
 
@@ -350,13 +394,26 @@ export function setupSocket(server: any) {
 
       // Skip vote won
       if (winningVote === "skip") {
-        startNextRound(
-          lobby,
-          "The group voted to skip. Discussion continues.",
-          voteResults
-        );
+        lobby.gameState.phase = "transition";
+        lobby.gameState.roundMessage = "The group voted to skip. Next round starting...";
 
+        lobby.gameState.voteResults = voteResults;
+
+        // Show transition screen immediately
         io.to(code).emit("lobby-update", lobby);
+
+        setTimeout(() => {
+          if (!lobbies[code]?.gameState) return;
+
+          startNextRound(
+            lobby,
+            "The group voted to skip. Discussion continues.",
+            voteResults
+          );
+
+          io.to(code).emit("lobby-update", lobby);
+        }, 3000);
+
         return;
       }
 
@@ -366,17 +423,84 @@ export function setupSocket(server: any) {
 
       lobby.gameState.roundMessage = undefined;
       lobby.gameState.voteResults = voteResults;
-      lobby.gameState.phase = "results";
 
       lobby.gameState.votedPlayerId = winningVote;
+
       lobby.gameState.votedPlayerName =
         votedPlayer?.name || "Unknown Player";
+
       lobby.gameState.votedPlayerRole =
         votedPlayer?.role || "innocent";
-      lobby.gameState.innocentsWin =
-        votedPlayer?.role === "imposter";
+
+      if (!lobby.gameState.eliminatedPlayers) {
+        lobby.gameState.eliminatedPlayers = [];
+      }
+
+      if (
+        votedPlayer &&
+        !lobby.gameState.eliminatedPlayers.includes(
+          votedPlayer.id
+        )
+      ) {
+        lobby.gameState.eliminatedPlayers.push(
+          votedPlayer.id
+        );
+      }
+
+      lobby.gameState.phase = "reveal";
 
       io.to(code).emit("lobby-update", lobby);
+
+      setTimeout(() => {
+        if (!lobbies[code]?.gameState) return;
+
+        const remainingImposters =
+          lobby.gameState.players.filter(
+            (player: any) =>
+              player.role === "imposter" &&
+              !lobby.gameState.eliminatedPlayers.includes(
+                player.id
+              )
+          );
+
+        const remainingInnocents =
+          lobby.gameState.players.filter(
+            (player: any) =>
+              player.role === "innocent" &&
+              !lobby.gameState.eliminatedPlayers.includes(
+                player.id
+              )
+          );
+
+        if (remainingImposters.length === 0) {
+          lobby.gameState.innocentsWin = true;
+          lobby.gameState.phase = "results";
+
+          io.to(code).emit("lobby-update", lobby);
+          return;
+        }
+
+        if (
+          remainingImposters.length >=
+          remainingInnocents.length
+        ) {
+          lobby.gameState.innocentsWin = false;
+          lobby.gameState.phase = "results";
+
+          io.to(code).emit("lobby-update", lobby);
+          return;
+        }
+
+        startNextRound(
+          lobby,
+          `${votedPlayer?.name} was eliminated.`,
+          voteResults
+        );
+
+        io.to(code).emit("lobby-update", lobby);
+      }, 3000);
+
+      return;
     });
 
     //play again
@@ -428,7 +552,7 @@ export function setupSocket(server: any) {
       const categoryNames = selectedCategories.filter(
         (category: string) => category in gameWords
       );
-      
+
       const randomCategory =
         categoryNames[
           Math.floor(Math.random() * categoryNames.length)
@@ -440,14 +564,36 @@ export function setupSocket(server: any) {
       const randomWord =
         words[Math.floor(Math.random() * words.length)];
 
-      const imposterIndex =
-        Math.floor(Math.random() * players.length);
+      const otherWords = words.filter(
+        (word) => word !== randomWord
+      );
+
+      const similarWord =
+        otherWords[
+          Math.floor(Math.random() * otherWords.length)
+        ];
+
+      const requestedImposterCount =
+        lobby.settings?.imposter?.imposterCount || 1;
+
+      const maxImposters = Math.max(
+        1,
+        Math.min(
+          requestedImposterCount,
+          players.length - 1
+        )
+      );
+
+      const shuffledIndexes = players
+        .map((_: any, index: number) => index)
+        .sort(() => Math.random() - 0.5);
+
+      const imposterIndexes = new Set(
+        shuffledIndexes.slice(0, maxImposters)
+      );
 
       const imposterMode =
         lobby.settings?.imposter?.imposterMode || "no-word";
-
-      const similarWord =
-        words.find((word) => word !== randomWord) || "Mystery";
 
       const startingPlayer =
         Math.floor(Math.random() * players.length);
@@ -467,13 +613,14 @@ export function setupSocket(server: any) {
         roundMessage: undefined,
         voteResults: [],
         playAgainVotes: {},
+        eliminatedPlayers: [],
 
         players: players.map(
           (player: any, index: number) => ({
             ...player,
             location: "game",
             role:
-              index === imposterIndex
+              imposterIndexes.has(index)
                 ? "imposter"
                 : "innocent",
           })
@@ -692,7 +839,9 @@ export function setupSocket(server: any) {
             currentLobby.gameState.phase ===
               "discussion" ||
             currentLobby.gameState.phase ===
-              "voting"
+              "voting" ||
+            currentLobby.gameState.phase ===
+              "transition"
           ) {
             currentLobby.gameState.phase =
               "discussion";
