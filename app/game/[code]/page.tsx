@@ -36,6 +36,7 @@ type GameState = {
     target: string;
   }[];
 
+  eliminatedPlayers?: string[];
   playAgainVotes?: Record<string, boolean>;
   players: GamePlayer[];
   votedPlayerId?: string;
@@ -62,6 +63,8 @@ export default function GamePage({ params }: GamePageProps) {
   const [playerId, setPlayerId] = useState("");
 
   const [transitionCountdown, setTransitionCountdown] = useState(3);
+
+  const [showRevealedRole, setShowRevealedRole] = useState(false);
 
   useEffect(() => {
     const storedPlayerId = getPlayerId();
@@ -183,9 +186,33 @@ export default function GamePage({ params }: GamePageProps) {
     gameState?.round,
   ]);
 
+  useEffect(() => {
+    if (gameState?.phase !== "reveal") {
+      setShowRevealedRole(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setShowRevealedRole(true);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [gameState?.phase, gameState?.votedPlayerId]);
+
   const currentPlayer = gameState?.players.find(
     (player) => player.id === playerId
   );
+
+  const eliminatedPlayers =
+    gameState?.eliminatedPlayers || [];
+
+  const isCurrentPlayerEliminated =
+    eliminatedPlayers.includes(playerId);
+
+  const activePlayers =
+    gameState?.players.filter(
+      (player) => !eliminatedPlayers.includes(player.id)
+    ) || [];
 
   const hasPressedPlayAgain = Boolean(
     gameState?.playAgainVotes?.[playerId || ""]
@@ -242,11 +269,15 @@ export default function GamePage({ params }: GamePageProps) {
         </p>
         
         <p className="text-sm text-gray-400 mb-4">
-          Votes submitted: {Object.keys(gameState.votes || {}).length} / {gameState.players.length}
+          Votes submitted:
+          {Object.keys(gameState.votes || {}).length} /
+          {activePlayers.length}
         </p>
 
         <div className="flex flex-col gap-3 w-full max-w-sm">
-          {gameState.players.map((player) => (
+          {gameState.players.filter(
+              (player) =>
+                !eliminatedPlayers.includes(player.id)).map((player) => (
             <button
               key={player.id}
               onClick={() => setSelectedVote(player.id)}
@@ -327,9 +358,23 @@ export default function GamePage({ params }: GamePageProps) {
           {gameState.votedPlayerName}
         </h1>
 
-        <p className="mt-8 text-lg text-gray-500">
-          Revealing role...
-        </p>
+        {!showRevealedRole ? (
+          <p className="mt-8 text-lg text-gray-500">
+            Revealing role...
+          </p>
+        ) : (
+          <p
+            className={`mt-8 text-3xl sm:text-5xl font-bold ${
+              gameState.votedPlayerRole === "imposter"
+                ? "text-red-500"
+                : "text-green-400"
+            }`}
+          >
+            {gameState.votedPlayerRole === "imposter"
+              ? "THE IMPOSTER"
+              : "INNOCENT"}
+          </p>
+        )}
       </main>
     );
   }
@@ -485,22 +530,23 @@ export default function GamePage({ params }: GamePageProps) {
             Current Turn:{" "}
             {gameState.players[gameState.currentTurn]?.name}
           </p>
+          {!isCurrentPlayerEliminated && (
+            <div className="mb-4 text-center">
+              {/* Timer */}
 
-          {/* Timer */}
-          <div className="mb-4 text-center">
-            <p className="text-sm text-gray-400 mb-1">
-              Time Remaining
-            </p>
+              <p className="text-sm text-gray-400 mb-1">
+                Time Remaining
+              </p>
 
-            <p
-              className={`text-4xl sm:text-5xl font-mono font-bold ${
-                timeLeft <= 5 ? "text-red-500" : "text-white"
-              }`}
-            >
-              {timeLeft}
-            </p>
-          </div>
-
+              <p
+                className={`text-4xl sm:text-5xl font-mono font-bold ${
+                  timeLeft <= 5 ? "text-red-500" : "text-white"
+                }`}
+              >
+                {timeLeft}
+              </p>
+            </div>
+          )}
           {/* Turn Order */}
           <div className="text-center w-full max-w-sm">
             <p className="text-sm text-gray-400 mb-2">
@@ -512,7 +558,9 @@ export default function GamePage({ params }: GamePageProps) {
                 <div
                   key={player.id}
                   className={`px-4 py-2 rounded-xl ${
-                    index === gameState.currentTurn
+                    eliminatedPlayers.includes(player.id)
+                      ? "bg-zinc-900 text-zinc-500 line-through opacity-60" 
+                      : index === gameState.currentTurn
                       ? "bg-blue-600"
                       : gameState.spokenPlayers.includes(index)
                       ? "bg-green-700"
@@ -520,7 +568,11 @@ export default function GamePage({ params }: GamePageProps) {
                   }`}
                 >
                   {player.name}
-
+                  {eliminatedPlayers.includes(player.id) && (
+                    <span className="ml-2 text-xs text-red-400">
+                      Eliminated
+                    </span>
+                  )}
                   {index === gameState.currentTurn && " 🎤"}
 
                   {gameState.spokenPlayers.includes(index) &&
@@ -577,17 +629,35 @@ export default function GamePage({ params }: GamePageProps) {
             )}
           </div>
 
+          {isCurrentPlayerEliminated && (
+            <div className="mb-4 w-full max-w-80 rounded-xl border border-red-900 bg-red-950/30 px-4 py-3 text-center">
+              <p className="font-semibold text-red-300">
+                You have been eliminated
+              </p>
+
+              <p className="mt-1 text-sm text-gray-400">
+                You can continue watching the game.
+              </p>
+            </div>
+          )}
+
           {/* Finish Turn */}
           <button
             onClick={nextTurn}
             disabled={
-              gameState.players[gameState.currentTurn]?.id !== playerId
+              isCurrentPlayerEliminated ||
+              gameState.players[gameState.currentTurn]?.id !==
+                playerId
             }
             className="mt-6 w-full max-w-80 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
           >
-            {gameState.players[gameState.currentTurn]?.id === playerId
-              ? "Finish Turn"
-              : `Waiting for ${gameState.players[gameState.currentTurn]?.name}`}
+          {isCurrentPlayerEliminated
+            ? "Spectating"
+            : gameState.players[gameState.currentTurn]?.id === playerId
+            ? "Finish Turn"
+            : `Waiting for ${
+                gameState.players[gameState.currentTurn]?.name
+              }`}
           </button>
 
           {/* Return to Lobby */}

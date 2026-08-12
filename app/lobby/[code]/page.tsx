@@ -72,6 +72,15 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
   const [imposterCount, setImposterCount] = useState(1);
 
+  //lock lobby state
+  const [lobbyLocked, setLobbyLocked] = useState(false);
+
+  //transfer host role
+  const [hostTransferTarget, setHostTransferTarget] = useState<Player | null>(null);
+
+  //kick players
+  const [kickTarget, setKickTarget] = useState<Player | null>(null);
+      
   useEffect(() => {
     const storedPlayerId = getPlayerId();
 
@@ -111,7 +120,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           lobby.settings.imposter?.imposterMode ||
             "no-word"
         );
-        
+
         setImposterCount(
           lobby.settings.imposter?.imposterCount || 1
         );
@@ -121,9 +130,21 @@ export default function LobbyPage({ params }: LobbyPageProps) {
         );
       }
 
-      if (lobby.settings?.categories){
-        setSelectedCategories(lobby.settings.categories);
+      if (lobby.settings?.categories) {
+        setSelectedCategories(
+          lobby.settings.categories
+        );
       }
+
+      setLobbyLocked(Boolean(lobby.locked));
+    });
+
+    socket.on("lobby-locked", () => {
+      router.push("/");
+    });
+
+    socket.on("kicked-from-lobby", () => {
+      router.push("/");
     });
 
     socket.on("game-started", (lobby) => {
@@ -134,6 +155,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     return () => {
       socket.off("lobby-update");
       socket.off("game-started");
+      socket.off("kicked-from-lobby");
+      socket.off("lobby-locked");
     };
   }, [code, router]);
 
@@ -159,7 +182,6 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     );
 
     if (nameExists) {
-        alert("Name already taken");
         return;
     }
 
@@ -174,6 +196,32 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     localStorage.setItem(`hiddenparty-name-${code}`, trimmedName);
 
     setPlayerName("");
+    }
+
+    function kickPlayer(targetPlayerId: string) {
+      if (!isHost) return;
+
+      socket.emit("kick-player", {
+        code,
+        targetPlayerId,
+      });
+    }
+
+    function transferHost(targetPlayerId: string) {
+      if (!isHost) return;
+
+      socket.emit("transfer-host", {
+        code,
+        targetPlayerId,
+      });
+    }
+
+    function toggleLobbyLock() {
+      if (!isHost) return;
+
+      socket.emit("toggle-lobby-lock", {
+        code,
+      });
     }
 
     function toggleReady() {
@@ -192,16 +240,35 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
   const isHost = currentPlayer?.isHost;
 
-  const allPlayersReady = players.length > 0 && players.every((player) => player.isReady);
+  const connectedPlayers = players.filter(
+    (player) => player.connected !== false
+  );
 
-  const canStartGame = isHost && players.length >= 3 
-                       && allPlayersReady&& selectedCategories.length > 0;
+  const maxSelectableImposters = Math.max(
+    1,
+    Math.min(
+      3,
+      connectedPlayers.length - 1
+    )
+  );
+
+  const allPlayersReady =
+    connectedPlayers.length > 0 &&
+    connectedPlayers.every(
+      (player) => player.isReady
+    );
+
+  const canStartGame =
+    Boolean(isHost) &&
+    connectedPlayers.length >= 3 &&
+    allPlayersReady &&
+    selectedCategories.length > 0;
 
   let startMessage = "";
 
   if (!isHost) {
     startMessage = "Only the host can start the game";
-  } else if (players.length < 3) {
+  } else if (connectedPlayers.length < 3) {
     startMessage = "Need at least 3 players to start";
   } else if (!allPlayersReady) {
     startMessage = "All players must be ready";
@@ -250,7 +317,6 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
   function startGame(){
     if (!canStartGame){
-      alert(startMessage);
       return;
     }
 
@@ -261,124 +327,165 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   // JSX = HTML-like UI returned by the component.
   return (
     <main className="relative min-h-dvh bg-black text-white p-4 sm:p-6 overflow-x-hidden">
-      <div className="w-full">
+      <div className="w-full flex justify-center mb-8">
+          <button
+              onClick={() => navigator.clipboard.writeText(code)}
+              className="
+                inline-flex
+                items-center
+                gap-3
+                bg-zinc-900
+                border
+                border-zinc-700
+                rounded-2xl
+                px-8
+                py-4
+                hover:border-blue-500
+                transition
+              "
+          >
+              📋
 
-        {/* Centered title and room code */}
-        <div className="text-center mb-6">
-          <h1 className="text-3xl sm:text-4xl font-bold">
-            Lobby
-          </h1>
-
-          <div className="mt-3 inline-block bg-zinc-900 border border-zinc-700 rounded-xl px-6 py-3">
-            <p className="text-2xl sm:text-3xl font-mono">
-              {code}
-            </p>
-          </div>
-        </div>
+              <span className="text-4xl sm:text-5xl font-mono font-bold tracking-widest">
+                  {code}
+              </span>
+          </button>
+      </div>
 
         {/* Centered Game Mode and controls */}
         <div className="w-full max-w-xl mx-auto">
 
           {/* Game settings */}
           <section className="w-full bg-zinc-900 rounded-2xl p-4 border border-zinc-800">
-            <h2 className="text-xl font-semibold mb-3">
+            <h2 className="text-xl font-semibold mb-4">
               Game Settings
             </h2>
 
-            <select
-              disabled={!isHost}
-              value={gameMode}
-              onChange={(e) => {
-                const newMode = e.target.value;
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                setGameMode(newMode);
-
-                updateSettings({
-                  ...gameSettings,
-                  mode: newMode,
-                });
-              }}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
-            >
-              <option value="imposter">Imposter</option>
-              <option value="mafia">Mafia</option>
-              <option value="werewolf">Werewolf</option>
-            </select>
-
-            {gameMode === "imposter" && (
-              <div className="mt-3">
+              {/* Game Mode */}
+              <div>
                 <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
-                  Imposter Mode
+                  Game Mode
                 </label>
 
                 <select
                   disabled={!isHost}
-                  value={imposterMode}
+                  value={gameMode}
                   onChange={(e) => {
-                    const newImposterMode = e.target.value;
+                    const newMode = e.target.value;
 
-                    setImposterMode(newImposterMode);
+                    setGameMode(newMode);
 
                     updateSettings({
                       ...gameSettings,
-                      imposter: {
-                        imposterMode: newImposterMode,
-                        imposterCount,
-                      },
+                      mode: newMode,
                     });
                   }}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base outline-none hover:border-zinc-500 transition"
                 >
-                  {[1, 2, 3].map((count) => (
-                    <option key={count} value={count}>
-                      {count}
-                    </option>
-                  ))}
-                  <option value="no-word">No Word</option>
-                  <option value="similar-word">
-                    Similar Word
-                  </option>
+                  <option value="imposter">Imposter</option>
+                  <option value="mafia">Mafia</option>
+                  <option value="werewolf">Werewolf</option>
                 </select>
               </div>
-            )}
 
-            <div className="mt-3">
-              <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
-                Categories
-              </label>
+              {/* Imposter Mode */}
+              {gameMode === "imposter" && (
+                <div>
+                  <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                    Imposter Mode
+                  </label>
 
-              <button
-                type="button"
-                disabled={!isHost}
-                onClick={openCategoryModal}
-                className="
-                w-full
-                bg-zinc-800
-                border
-                border-zinc-700
-                rounded-lg
-                px-4
-                py-2
-                sm:py-2.5
-                text-sm
-                sm:text-base
-                transition
-                hover:border-blue-500
-                "
-              >
-                <div className="w-full flex justify-between items-center">
-                  <span>Choose Categories</span>
+                  <select
+                    disabled={!isHost}
+                    value={imposterMode}
+                    onChange={(e) => {
+                      const newImposterMode = e.target.value;
 
-                  <span className="text-sm text-gray-400">
-                    {selectedCategories.length} selected
-                  </span>
+                      setImposterMode(newImposterMode);
+
+                      updateSettings({
+                        ...gameSettings,
+                        imposter: {
+                          imposterMode: newImposterMode,
+                          imposterCount,
+                        },
+                      });
+                    }}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base outline-none hover:border-zinc-500 transition"
+                  >
+                    <option value="no-word">No Word</option>
+                    <option value="similar-word">
+                      Similar Word
+                    </option>
+                  </select>
                 </div>
-              </button>
+              )}
+
+              {/* Number of Imposters */}
+              {gameMode === "imposter" && (
+                <div>
+                  <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                    Number of Imposters
+                  </label>
+
+                  <select
+                    disabled={!isHost}
+                    value={imposterCount}
+                    onChange={(e) => {
+                      const newCount = Number(e.target.value);
+                      setImposterCount(newCount);
+
+                      updateSettings({
+                        ...gameSettings,
+                        imposter: {
+                          imposterMode,
+                          imposterCount: newCount,
+                        },
+                      });
+                    }}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base outline-none hover:border-zinc-500 transition"
+                  >
+                      {Array.from(
+                        { length: maxSelectableImposters },
+                        (_, index) => index + 1
+                      ).map((count) => (
+                      <option key={count} value={count}>
+                        {count}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Categories */}
+              <div>
+                <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  Categories
+                </label>
+
+                <button
+                  type="button"
+                  disabled={!isHost}
+                  onClick={openCategoryModal}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base hover:border-blue-500 transition"
+                >
+                  <div className="flex justify-between items-center gap-2">
+                    <span>Choose Categories</span>
+
+                    <span className="text-xs text-gray-400 whitespace-nowrap">
+                      {selectedCategories.length} selected
+                    </span>
+                  </div>
+                </button>
+              </div>
+
             </div>
 
             {(gameMode === "mafia" ||
               gameMode === "werewolf") && (
-              <div className="mt-5">
+              <div className="mt-4">
                 <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
                   Special Roles
                 </label>
@@ -398,7 +505,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                       },
                     });
                   }}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-base outline-none hover:border-zinc-500 transition"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base"
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
                     (number) => (
@@ -501,10 +608,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
                 <p className="mt-1 text-sm text-gray-500">
                   Players ready:{" "}
-                  {players.filter(
+                  {connectedPlayers.filter(
                     (player) => player.isReady
                   ).length}{" "}
-                  / {players.length}
+                  / {connectedPlayers.length}
                 </p>
               </div>
             )}
@@ -512,7 +619,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
         </div>
 
         {/* Upper-right player list */}
-        <section className="w-full mt-6 lg:mt-0 lg:fixed lg:top-6 lg:right-6 lg:w-72 bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+        <div className="w-full mt-6 lg:mt-0 lg:fixed lg:top-6 lg:right-6 lg:w-72">
+          <section className="w-full bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-semibold">
               Players
@@ -563,7 +671,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   )}
                 </div>
 
-                <div className="shrink-0 flex gap-1">
+                <div className="shrink-0 flex items-center gap-1">
                   {player.isReady && (
                     <span className="text-[10px] bg-green-500 text-black px-2 py-1 rounded-full">
                       Ready
@@ -572,14 +680,48 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
                   {player.isHost && (
                     <span className="text-[10px] bg-blue-500 text-black px-2 py-1 rounded-full">
-                      Host
+                      👑 Host
                     </span>
+                  )}
+
+                {isHost &&
+                  !player.isHost &&
+                  player.id !== playerId && (
+                    <>
+                      <button
+                        onClick={() => setHostTransferTarget(player)}
+                        className="text-[10px] bg-yellow-500 text-black hover:bg-yellow-400 px-2 py-1 rounded-full transition"
+                      >
+                        Make Host
+                      </button>
+
+                      <button
+                        onClick={() => setKickTarget(player)}
+                        className="text-[10px] bg-red-600 hover:bg-red-500 px-2 py-1 rounded-full transition"
+                      >
+                        Kick
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
             ))}
           </div>
         </section>
+        {isHost && (
+            <button
+                onClick={toggleLobbyLock}
+                className={`mt-3 w-full rounded-xl py-3 font-semibold transition ${
+                    lobbyLocked
+                        ? "bg-yellow-600 hover:bg-yellow-500"
+                        : "bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
+                }`}
+            >
+                {lobbyLocked
+                    ? "🔒 Lobby Locked"
+                    : "🔓 Lock Lobby"}
+            </button>
+        )}
       </div>
       {showCategoryModal && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -618,13 +760,29 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                           : [...current, category]
                       );
                     }}
-                    className={`px-3 py-3 rounded-xl border ${
-                      selected
-                        ? "bg-blue-600 border-blue-400"
-                        : "bg-zinc-800 border-zinc-700"
-                    }`}
+                    className={`
+                      px-3
+                      py-3
+                      min-h-[64px]
+                      rounded-xl
+                      border
+                      flex
+                      items-center
+                      justify-center
+                      text-center
+                      leading-tight
+                      transition-all
+                      duration-200
+                      ${
+                        selected
+                          ? "bg-blue-600 border-blue-400 hover:bg-blue-500 hover:scale-105"
+                          : "bg-zinc-800 border-zinc-700 hover:bg-zinc-700 hover:border-blue-500 hover:scale-105"
+                      }
+                    `}
                   >
-                    {category}
+                  {category === "WeatherAndNature"
+                    ? "Weather & Nature"
+                    : category}
                   </button>
                 );
               })}
@@ -652,6 +810,79 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
           </div>
 
+        </div>
+      )}
+      {hostTransferTarget && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+            <h2 className="text-xl font-bold mb-3">
+              Transfer Host
+            </h2>
+
+            <p className="text-gray-400 mb-6">
+              Make{" "}
+              <span className="text-white font-semibold">
+                {hostTransferTarget.name}
+              </span>{" "}
+              the new host?
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setHostTransferTarget(null)}
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 rounded-xl py-3 transition"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => {
+                  transferHost(hostTransferTarget.id);
+                  setHostTransferTarget(null);
+                }}
+                className="flex-1 bg-yellow-500 text-black hover:bg-yellow-400 rounded-xl py-3 font-semibold transition"
+              >
+                Transfer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {kickTarget && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+            <h2 className="text-xl font-bold mb-3">
+              Kick Player
+            </h2>
+
+            <p className="text-gray-400 mb-6">
+              Remove{" "}
+              <span className="text-white font-semibold">
+                {kickTarget.name}
+              </span>{" "}
+              from the lobby?
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setKickTarget(null)}
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 rounded-xl py-3 transition"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => {
+                  kickPlayer(kickTarget.id);
+                  setKickTarget(null);
+                }}
+                className="flex-1 bg-red-600 hover:bg-red-500 rounded-xl py-3 font-semibold transition"
+              >
+                Kick
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

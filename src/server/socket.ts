@@ -15,17 +15,37 @@ function startNextRound(
   roundMessage: string,
   voteResults: VoteResult[]
 ) {
-  const totalPlayers = lobby.gameState.players.length;
+  const activePlayers =
+    getActivePlayers(lobby.gameState);
 
   lobby.gameState.round += 1;
   lobby.gameState.phase = "discussion";
+
+  const randomActivePlayer =
+    activePlayers[
+      Math.floor(Math.random() * activePlayers.length)
+    ];
+
   lobby.gameState.currentTurn =
-    Math.floor(Math.random() * totalPlayers);
+    lobby.gameState.players.findIndex(
+      (player: any) =>
+        player.id === randomActivePlayer.id
+    );
   lobby.gameState.spokenPlayers = [];
   lobby.gameState.votes = {};
 
   lobby.gameState.roundMessage = roundMessage;
   lobby.gameState.voteResults = voteResults;
+}
+
+function getActivePlayers(gameState: any) {
+  const eliminatedPlayers =
+    gameState.eliminatedPlayers || [];
+
+  return gameState.players.filter(
+    (player: any) =>
+      !eliminatedPlayers.includes(player.id)
+  );
 }
 
 export function setupSocket(server: any) {
@@ -42,6 +62,7 @@ export function setupSocket(server: any) {
         lobbies[code] = {
         players: [],
         settings: {},
+        locked: false,  
         };
     }
 
@@ -68,6 +89,11 @@ export function setupSocket(server: any) {
         const existingPlayer = lobby.players.find(
           (player: any) => player.id === playerId
         );
+
+        if (lobby.locked && !existingPlayer) {
+          socket.emit("lobby-locked");
+          return;
+        }
 
         if (existingPlayer) {
           existingPlayer.name =
@@ -129,6 +155,60 @@ export function setupSocket(server: any) {
       io.to(code).emit("lobby-update", lobby);
     });
 
+    //host control to kick a player
+    socket.on("kick-player", ({ code, targetPlayerId }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      const host = lobby.players.find(
+        (player: any) => player.socketId === socket.id
+      );
+
+      if (!host?.isHost) return;
+
+      const targetPlayer = lobby.players.find(
+        (player: any) => player.id === targetPlayerId
+      );
+
+      if (!targetPlayer) return;
+      if (targetPlayer.isHost) return;
+
+      lobby.players = lobby.players.filter(
+        (player: any) => player.id !== targetPlayerId
+      );
+
+      if (lobby.gameState?.players) {
+        lobby.gameState.players =
+          lobby.gameState.players.filter(
+            (player: any) => player.id !== targetPlayerId
+          );
+      }
+
+      if (targetPlayer.socketId) {
+        io.to(targetPlayer.socketId).emit("kicked-from-lobby");
+      }
+
+      io.to(code).emit("lobby-update", lobby);
+    });
+
+    //Toggle lock lobby
+    socket.on("toggle-lobby-lock", ({ code }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      const host = lobby.players.find(
+        (player: any) => player.socketId === socket.id
+      );
+
+      if (!host?.isHost) return;
+
+      lobby.locked = !lobby.locked;
+
+      io.to(code).emit("lobby-update", lobby);
+    });
+
     // Toggle ready status
     socket.on("toggle-ready", ({ code }) => {
       const lobby = lobbies[code];
@@ -143,6 +223,49 @@ export function setupSocket(server: any) {
       if (!player) return;
 
       player.isReady = !player.isReady;
+
+      io.to(code).emit("lobby-update", lobby);
+    });
+
+    //host control on transferring host role
+    socket.on("transfer-host", ({ code, targetPlayerId }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      const currentHost = lobby.players.find(
+        (player: any) => player.socketId === socket.id
+      );
+
+      if (!currentHost?.isHost) return;
+
+      const targetPlayer = lobby.players.find(
+        (player: any) => player.id === targetPlayerId
+      );
+
+      if (!targetPlayer) return;
+      if (targetPlayer.id === currentHost.id) return;
+
+      currentHost.isHost = false;
+      targetPlayer.isHost = true;
+
+      if (lobby.gameState?.players) {
+        const oldGameHost = lobby.gameState.players.find(
+          (player: any) => player.id === currentHost.id
+        );
+
+        const newGameHost = lobby.gameState.players.find(
+          (player: any) => player.id === targetPlayer.id
+        );
+
+        if (oldGameHost) {
+          oldGameHost.isHost = false;
+        }
+
+        if (newGameHost) {
+          newGameHost.isHost = true;
+        }
+      }
 
       io.to(code).emit("lobby-update", lobby);
     });
@@ -251,7 +374,9 @@ export function setupSocket(server: any) {
 
       if (!lobby?.gameState) return;
 
-      const totalPlayers = lobby.gameState.players.length;
+      const activePlayers = getActivePlayers(lobby.gameState);
+
+      const totalPlayers = activePlayers.length;
 
       const activePlayer =
         lobby.gameState.players[lobby.gameState.currentTurn];
@@ -270,14 +395,26 @@ export function setupSocket(server: any) {
 
       if (lobby.gameState.spokenPlayers.length >= totalPlayers) {
         lobby.gameState.phase = "voting";
-        lobby.gameState.currentTurn = 0;
 
         io.to(code).emit("lobby-update", lobby);
         return;
       }
 
-      lobby.gameState.currentTurn =
-        (lobby.gameState.currentTurn + 1) % totalPlayers;
+      let nextIndex =
+        (lobby.gameState.currentTurn + 1) %
+        lobby.gameState.players.length;
+
+      while (
+        lobby.gameState.eliminatedPlayers?.includes(
+          lobby.gameState.players[nextIndex].id
+        )
+      ) {
+        nextIndex =
+          (nextIndex + 1) %
+          lobby.gameState.players.length;
+      }
+
+      lobby.gameState.currentTurn = nextIndex;
 
       io.to(code).emit("lobby-update", lobby);
     });
@@ -294,6 +431,10 @@ export function setupSocket(server: any) {
       );
 
       if (!voter) return;
+
+      if (lobby.gameState.eliminatedPlayers?.includes(voter.id)){
+        return;
+      }
 
       const validTarget =
         vote === "skip" ||
@@ -319,7 +460,8 @@ export function setupSocket(server: any) {
       lobby.gameState.votes[voter.id] = vote;
 
       const voteCount = Object.keys(lobby.gameState.votes).length;
-      const totalPlayers = lobby.gameState.players.length;
+
+      const totalPlayers = getActivePlayers(lobby.gameState).length;
 
       const voteResults = Object.entries(
         lobby.gameState.votes
@@ -807,8 +949,7 @@ export function setupSocket(server: any) {
               .playAgainVotes[leavingPlayerId];
           }
 
-          const remainingPlayers =
-            currentLobby.gameState.players.length;
+          const remainingPlayers =getActivePlayers(currentLobby.gameState).length;
 
           // End game if fewer than three remain
           if (remainingPlayers < 3) {
@@ -846,9 +987,17 @@ export function setupSocket(server: any) {
             currentLobby.gameState.phase =
               "discussion";
 
+            const activePlayers = getActivePlayers(currentLobby.gameState);
+
+            const randomPlayer =
+              activePlayers[
+                Math.floor(Math.random() * activePlayers.length)
+              ];
+
             currentLobby.gameState.currentTurn =
-              Math.floor(
-                Math.random() * remainingPlayers
+              currentLobby.gameState.players.findIndex(
+                (player: any) =>
+                  player.id === randomPlayer.id
               );
 
             currentLobby.gameState.spokenPlayers =
