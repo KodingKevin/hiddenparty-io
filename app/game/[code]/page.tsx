@@ -16,6 +16,7 @@ type GamePlayer = {
   name: string;
   role: "imposter" | "innocent";
   isHost: boolean;
+  connected?: boolean;
 };
 
 type GameState = {
@@ -24,6 +25,7 @@ type GameState = {
   word: string;
   imposterMode: string;
   imposterWord: string;
+  turnTime: number;
   phase: "discussion" | "voting" | "transition" | "reveal" | "results";
   currentTurn: number;
   round: number;
@@ -54,7 +56,7 @@ export default function GamePage({ params }: GamePageProps) {
   
   const [cardOpened, setCardOpened] = useState(false);
 
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(45);
 
   const [selectedVote, setSelectedVote] = useState("");
   
@@ -135,7 +137,7 @@ export default function GamePage({ params }: GamePageProps) {
       return;
     }
 
-    setTimeLeft(45);
+    setTimeLeft(gameState.turnTime || 45);
 
     const timer = setInterval(() => {
       setTimeLeft((currentTime) => {
@@ -167,6 +169,7 @@ export default function GamePage({ params }: GamePageProps) {
     gameState?.currentTurn,
     gameState?.phase,
     gameState?.players,
+    gameState?.turnTime,
   ]);
 
   useEffect(() => {
@@ -212,6 +215,16 @@ export default function GamePage({ params }: GamePageProps) {
   const activePlayers =
     gameState?.players.filter(
       (player) => !eliminatedPlayers.includes(player.id)
+    ) || [];
+
+  const imposters =
+    gameState?.players.filter(
+      (player) => player.role === "imposter"
+    ) || [];
+
+  const connectedGamePlayers =
+    gameState?.players.filter(
+      (player) => player.connected !== false
     ) || [];
 
   const hasPressedPlayAgain = Boolean(
@@ -262,54 +275,80 @@ export default function GamePage({ params }: GamePageProps) {
   if (gameState.phase === "voting") {
     return (
       <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-6 text-center">Voting Phase</h1>
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-3 text-center">
+          Voting
+        </h1>
 
-        <p className="text-xl text-gray-400 mb-8">
-          Round {gameState.round} is complete.
+        <p className="text-lg text-gray-400 mb-2 text-center">
+          Who do you think is the Imposter?
+        </p>
+
+        <p className="text-sm text-gray-500 mb-6">
+          Round {gameState.round}
         </p>
         
-        <p className="text-sm text-gray-400 mb-4">
-          Votes submitted:
-          {Object.keys(gameState.votes || {}).length} /
-          {activePlayers.length}
-        </p>
+        <div className="mb-6 rounded-xl bg-zinc-900 border border-zinc-800 px-4 py-3 text-center">
+          <p className="text-sm text-gray-400">
+            Votes Submitted
+          </p>
 
-        <div className="flex flex-col gap-3 w-full max-w-sm">
-          {gameState.players.filter(
-              (player) =>
-                !eliminatedPlayers.includes(player.id)).map((player) => (
+          <p className="text-2xl font-bold mt-1">
+            {Object.keys(gameState.votes || {}).length}
+            {" / "}
+            {activePlayers.length}
+          </p>
+        </div>
+
+      <div className="flex flex-col gap-3 w-full max-w-sm">
+        {gameState.players
+          .filter(
+            (player) =>
+              !eliminatedPlayers.includes(player.id) &&
+              player.id !== playerId
+          )
+          .map((player) => (
             <button
               key={player.id}
               onClick={() => setSelectedVote(player.id)}
               disabled={hasSubmittedVote}
-              className={`px-4 py-3 rounded-xl border transition ${
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-200 ${
                 hasSubmittedVote
                   ? "cursor-not-allowed opacity-60"
-                  : "hover:bg-zinc-700"
+                  : "hover:bg-zinc-700 hover:scale-[1.02]"
               } ${
                 selectedVote === player.id
-                  ? "bg-blue-600 border-blue-400"
+                  ? "bg-blue-600 border-blue-400 ring-2 ring-blue-400/40"
                   : "bg-zinc-800 border-zinc-700"
               }`}
             >
-              Vote {player.name}
+              <span className="font-medium">
+                {player.name}
+              </span>
+
+              {selectedVote === player.id && (
+                <span className="text-sm">
+                  ✓ Selected
+                </span>
+              )}
             </button>
           ))}
 
           <button
             onClick={() => setSelectedVote("skip")}
             disabled={hasSubmittedVote}
-            className={`px-4 py-3 rounded-xl border transition ${
+            className={`mt-2 px-4 py-3 rounded-xl border border-dashed transition-all duration-200 ${
               hasSubmittedVote
                 ? "cursor-not-allowed opacity-60"
-                : "hover:bg-zinc-700"
+                : "hover:bg-yellow-500/10"
             } ${
               selectedVote === "skip"
-                ? "bg-blue-600 border-blue-400"
-                : "bg-zinc-800 border-zinc-700"
+                ? "bg-yellow-500/20 border-yellow-400 text-yellow-300"
+                : "bg-zinc-900 border-zinc-600 text-gray-300"
             }`}
           >
-            Skip Vote
+            {selectedVote === "skip"
+              ? "✓ Skip Selected"
+              : "Skip Vote"}
           </button>
 
           <button
@@ -403,18 +442,60 @@ export default function GamePage({ params }: GamePageProps) {
               ? "the Imposter!"
               : "Innocent."}
           </p>
+        </div>
 
-          <p
-            className={`text-4xl font-bold ${
-              gameState.innocentsWin
-                ? "text-green-500"
-                : "text-red-500"
-            }`}
-          >
-            {gameState.innocentsWin
-              ? "Innocents Win!"
-              : "Imposter Wins!"}
-          </p>
+        <p
+          className={`text-4xl font-bold ${
+            gameState.innocentsWin
+              ? "text-green-500"
+              : "text-red-500"
+          }`}
+        >
+          {gameState.innocentsWin
+            ? "Innocents Win!"
+            : imposters.length === 1
+            ? "Imposter Wins!"
+            : "Imposters Win!"}
+        </p>
+
+        <div className="mt-8 mb-8 w-full max-w-sm">
+          <h2 className="text-xl font-semibold text-center mb-3">
+            Imposters
+          </h2>
+
+          <div className="flex flex-col gap-2">
+            {imposters.map((player) => {
+              const eliminated =
+                eliminatedPlayers.includes(player.id);
+
+              return (
+                <div
+                  key={player.id}
+                  className={`flex items-center justify-between rounded-xl px-4 py-3 ${
+                    eliminated
+                      ? "bg-zinc-800 text-zinc-500"
+                      : "bg-red-950/40 border border-red-900"
+                  }`}
+                >
+                  <span className="font-medium">
+                    {player.name}
+                  </span>
+
+                  <span
+                    className={
+                      eliminated
+                        ? "text-gray-500"
+                        : "text-red-400"
+                    }
+                  >
+                    {eliminated
+                      ? "Eliminated"
+                      : "Survived"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Vote summary */}
@@ -455,7 +536,7 @@ export default function GamePage({ params }: GamePageProps) {
         <div className="w-full max-w-sm flex flex-col gap-3">
           <p className="text-sm text-center text-gray-400">
             Ready to play again: {playAgainCount} /{" "}
-            {gameState.players.length}
+            {connectedGamePlayers.length}
           </p>
 
           <button
@@ -559,9 +640,9 @@ export default function GamePage({ params }: GamePageProps) {
                   key={player.id}
                   className={`px-4 py-2 rounded-xl ${
                     eliminatedPlayers.includes(player.id)
-                      ? "bg-zinc-900 text-zinc-500 line-through opacity-60" 
+                      ? "bg-zinc-900 text-zinc-500 line-through opacity-60"
                       : index === gameState.currentTurn
-                      ? "bg-blue-600"
+                      ? "bg-blue-600 ring-2 ring-blue-400 scale-[1.03] animate-pulse"
                       : gameState.spokenPlayers.includes(index)
                       ? "bg-green-700"
                       : "bg-zinc-800"
@@ -573,7 +654,12 @@ export default function GamePage({ params }: GamePageProps) {
                       Eliminated
                     </span>
                   )}
-                  {index === gameState.currentTurn && " 🎤"}
+                  
+                  {index === gameState.currentTurn && (
+                    <span className="ml-2">
+                      🎤 Speaking
+                    </span>
+                  )}
 
                   {gameState.spokenPlayers.includes(index) &&
                     index !== gameState.currentTurn &&
@@ -587,46 +673,80 @@ export default function GamePage({ params }: GamePageProps) {
         {/* RIGHT SIDE */}
         <section className="flex flex-col items-center">
 
-          {/* Envelope */}
+          {/* Role Card */}
           <div
-            onClick={() => setCardOpened(!cardOpened)}
-            className="cursor-pointer"
+            onClick={() => setCardOpened((current) => !current)}
+            className="w-[85vw] max-w-80 h-44 sm:h-52 cursor-pointer [perspective:1000px]"
           >
-            {!cardOpened ? (
-              <div className="relative w-[85vw] max-w-80 h-44 sm:h-52 bg-zinc-900 border-4 border-zinc-700 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-full border-t-[90px] border-t-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-                <div className="absolute bottom-0 left-0 w-full h-full border-b-[90px] border-b-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
-                <h2 className="z-10 text-2xl sm:text-3xl font-bold">
-                  Open Envelope
-                </h2>
+            <div
+              className={`
+                relative
+                w-full
+                h-full
+                transition-transform
+                duration-500
+                [transform-style:preserve-3d]
+                ${
+                  cardOpened
+                    ? "[transform:rotateY(180deg)]"
+                    : ""
+                }
+              `}
+            >
+              {/* FRONT - Closed Envelope */}
+              <div className="absolute inset-0 [backface-visibility:hidden]">
+                <div className="relative w-full h-full bg-zinc-900 border-4 border-zinc-700 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-full border-t-[90px] border-t-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
+
+                  <div className="absolute bottom-0 left-0 w-full h-full border-b-[90px] border-b-zinc-800 border-l-[160px] border-l-transparent border-r-[160px] border-r-transparent" />
+
+                  <div className="z-10 text-center">
+                    <h2 className="text-2xl sm:text-3xl font-bold">
+                      Top Secret
+                    </h2>
+
+                    <p className="mt-2 text-sm text-gray-400">
+                      Tap to reveal
+                    </p>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="w-[85vw] max-w-80 h-44 sm:h-52 bg-white text-black border-4 border-zinc-300 rounded-2xl flex flex-col items-center justify-center text-center shadow-xl">
-                <p className="text-sm text-gray-500 mb-2">
-                  Category
-                </p>
 
-                <h2 className="text-2xl sm:text-3xl font-bold mb-4">
-                  {gameState.category}
-                </h2>
-
-                {currentPlayer.role === "imposter" ? (
-                  gameState.imposterMode === "similar-word" ? (
-                    <p className="text-3xl sm:text-4xl font-bold">
-                      {gameState.imposterWord}
-                    </p>
-                  ) : (
-                    <p className="text-xl font-semibold">
-                      You are the Imposter
-                    </p>
-                  )
-                ) : (
-                  <p className="text-3xl sm:text-4xl font-bold">
-                    {gameState.word}
+              {/* BACK - Role / Word */}
+              <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)]">
+                <div className="w-full h-full bg-white text-black border-4 border-zinc-300 rounded-2xl flex flex-col items-center justify-center text-center shadow-xl px-4">
+                  <p className="text-sm text-gray-500 mb-2">
+                    Category
                   </p>
-                )}
+
+                  <h2 className="text-2xl sm:text-3xl font-bold mb-4">
+                    {gameState.category}
+                  </h2>
+
+                  {currentPlayer.role === "imposter" ? (
+                    gameState.imposterMode === "similar-word" ? (
+                      <p className="text-3xl sm:text-4xl font-bold">
+                        {gameState.imposterWord}
+                      </p>
+                    ) : (
+                      <div>
+                        <p className="text-xl sm:text-2xl font-bold text-red-600">
+                          You are the Imposter
+                        </p>
+
+                        <p className="mt-2 text-sm text-gray-500">
+                          Blend in.
+                        </p>
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-3xl sm:text-4xl font-bold">
+                      {gameState.word}
+                    </p>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
 
           {isCurrentPlayerEliminated && (
@@ -649,8 +769,14 @@ export default function GamePage({ params }: GamePageProps) {
               gameState.players[gameState.currentTurn]?.id !==
                 playerId
             }
-            className="mt-6 w-full max-w-80 bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed"
-          >
+            className={`mt-6 w-full max-w-80 px-6 py-3 rounded-xl font-semibold transition-all duration-200 ${
+              isCurrentPlayerEliminated
+                ? "bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                : gameState.players[gameState.currentTurn]?.id === playerId
+                ? "bg-blue-600 hover:bg-blue-500 hover:scale-105 ring-2 ring-blue-400"
+                : "bg-zinc-700 text-zinc-400 cursor-not-allowed"
+            }`}
+            >
           {isCurrentPlayerEliminated
             ? "Spectating"
             : gameState.players[gameState.currentTurn]?.id === playerId

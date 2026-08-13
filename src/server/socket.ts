@@ -44,7 +44,8 @@ function getActivePlayers(gameState: any) {
 
   return gameState.players.filter(
     (player: any) =>
-      !eliminatedPlayers.includes(player.id)
+      !eliminatedPlayers.includes(player.id) &&
+      player.connected !== false
   );
 }
 
@@ -63,6 +64,7 @@ export function setupSocket(server: any) {
         players: [],
         settings: {},
         locked: false,  
+        chatMessages: [],
         };
     }
 
@@ -79,6 +81,8 @@ export function setupSocket(server: any) {
           lobbies[code] = {
             players: [],
             settings: {},
+            locked: false,
+            chatMessages: [],
           };
         }
 
@@ -150,6 +154,13 @@ export function setupSocket(server: any) {
 
       if (!lobby) return;
 
+      const requestingPlayer = lobby.players.find(
+        (player: any) =>
+          player.socketId === socket.id
+      );
+
+      if (!requestingPlayer?.isHost) return;
+
       lobby.settings = settings;
 
       io.to(code).emit("lobby-update", lobby);
@@ -207,6 +218,51 @@ export function setupSocket(server: any) {
       lobby.locked = !lobby.locked;
 
       io.to(code).emit("lobby-update", lobby);
+    });
+
+    //chat abilities
+    socket.on("send-chat-message", ({ code, message }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      if (lobby.settings?.chatEnabled === false) {
+        return;
+      }
+
+      const player = lobby.players.find(
+        (player: any) =>
+          player.socketId === socket.id
+      );
+
+      if (!player) return;
+
+      const trimmedMessage = message?.trim();
+
+      if (!trimmedMessage) return;
+
+      const chatMessage = {
+        id: `${Date.now()}-${player.id}`,
+        playerId: player.id,
+        playerName: player.name,
+        message: trimmedMessage.slice(0, 200),
+        timestamp: Date.now(),
+      };
+
+      if (!lobby.chatMessages) {
+        lobby.chatMessages = [];
+      }
+
+      lobby.chatMessages.push(chatMessage);
+
+      // Prevent chat history from growing forever
+      lobby.chatMessages =
+        lobby.chatMessages.slice(-50);
+
+      io.to(code).emit(
+        "chat-message",
+        chatMessage
+      );
     });
 
     // Toggle ready status
@@ -348,6 +404,7 @@ export function setupSocket(server: any) {
           word: randomWord,
           imposterMode,
           imposterWord: similarWord,
+          turnTime: lobby.settings?.imposter?.turnTime || 45,
           phase: "discussion",
           currentTurn: startingPlayer,
           round: 1,
@@ -407,7 +464,8 @@ export function setupSocket(server: any) {
       while (
         lobby.gameState.eliminatedPlayers?.includes(
           lobby.gameState.players[nextIndex].id
-        )
+        ) ||
+        lobby.gameState.players[nextIndex].connected === false
       ) {
         nextIndex =
           (nextIndex + 1) %
@@ -436,6 +494,11 @@ export function setupSocket(server: any) {
         return;
       }
 
+      // Prevent voting for yourself
+      if (vote === voter.id) {
+        return;
+      }
+      
       const validTarget =
         vote === "skip" ||
         lobby.gameState.players.some(
@@ -673,7 +736,12 @@ export function setupSocket(server: any) {
         lobby.gameState.playAgainVotes
       ).length;
 
-      const totalPlayers = lobby.gameState.players.length;
+      const connectedGamePlayers =
+        lobby.gameState.players.filter(
+          (player: any) => player.connected !== false
+        );
+
+      const totalPlayers = connectedGamePlayers.length;
 
       // Update everyone while waiting
       if (readyCount < totalPlayers) {
@@ -746,6 +814,8 @@ export function setupSocket(server: any) {
         word: randomWord,
         imposterMode,
         imposterWord: similarWord,
+        turnTime: lobby.settings?.imposter?.turnTime || 45,
+
         phase: "discussion",
         currentTurn: startingPlayer,
         round: 1,

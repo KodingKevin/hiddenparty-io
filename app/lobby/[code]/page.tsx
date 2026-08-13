@@ -2,7 +2,7 @@
 // Tells Next.js this page should run in the browser.
 // Needed for interactivity like buttons, state, and inputs.
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 // useState -> lets the UI remember/change values
 // use -> unwraps the Promise version of params in Next.js 16
 
@@ -45,6 +45,22 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     connected?: boolean;
   };
 
+  type ChatMessage = {
+    id: string;
+    playerId: string;
+    playerName: string;
+    message: string;
+    timestamp: number;
+  }
+
+  const [chatMessages, setChatMessages] =
+    useState<ChatMessage[]>([]);
+
+  const [chatInput, setChatInput] =
+    useState("");
+
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+
   const [players, setPlayers] = useState<Player[]>([]);
 
   // Stores the text currently typed into the input box.
@@ -69,8 +85,15 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   const [tempCategories, setTempCategories] = useState<string[]>(
     Object.keys(gameWords)
   );
-
+  
+  //number of imposters
   const [imposterCount, setImposterCount] = useState(1);
+
+  //timer setting
+  const [turnTime, setTurnTime] = useState(45);
+
+  //chat setting
+  const [chatEnabled, setChatEnabled] = useState(true);
 
   //lock lobby state
   const [lobbyLocked, setLobbyLocked] = useState(false);
@@ -104,6 +127,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
       setPlayers(lobby.players);
 
+      if (lobby.chatMessages){
+        setChatMessages(lobby.chatMessages);
+      }
+
       const currentPlayerData = lobby.players.find(
         (player: Player) =>
           player.id === storedPlayerId
@@ -125,8 +152,16 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           lobby.settings.imposter?.imposterCount || 1
         );
 
+        setTurnTime(
+          lobby.settings.imposter?.turnTime || 45
+        );
+
         setRoleCount(
           lobby.settings.socialDeduction?.roleCount || 2
+        );
+
+        setChatEnabled(
+          lobby.settings?.chatEnabled ?? true
         );
       }
 
@@ -147,6 +182,13 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       router.push("/");
     });
 
+    socket.on("chat-message", (message) => {
+      setChatMessages((current) => [
+        ...current,
+        message,
+      ]);
+    });
+
     socket.on("game-started", (lobby) => {
       console.log("Game started!", lobby);
       router.push(`/game/${code}`);
@@ -157,8 +199,15 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       socket.off("game-started");
       socket.off("kicked-from-lobby");
       socket.off("lobby-locked");
+      socket.off("chat-message");
     };
   }, [code, router]);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
+  }, [chatMessages]);
 
   // Stores the currently selected game mode
   const [gameMode, setGameMode] = useState("imposter");
@@ -224,6 +273,19 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       });
     }
 
+    function sendChatMessage() {
+      const message = chatInput.trim();
+
+      if (!message || !chatEnabled) return;
+
+      socket.emit("send-chat-message", {
+        code,
+        message,
+      });
+
+      setChatInput("");
+    }
+
     function toggleReady() {
     if (!currentPlayerName) return;
 
@@ -283,7 +345,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     imposter:{
       imposterMode,
       imposterCount,
+      turnTime,
     },
+
+    chatEnabled,
 
     socialDeduction:{
       roleCount,
@@ -410,6 +475,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                         imposter: {
                           imposterMode: newImposterMode,
                           imposterCount,
+                          turnTime,
                         },
                       });
                     }}
@@ -442,6 +508,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                         imposter: {
                           imposterMode,
                           imposterCount: newCount,
+                          turnTime,
                         },
                       });
                     }}
@@ -458,6 +525,67 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   </select>
                 </div>
               )}
+
+              {gameMode === "imposter" && (
+                <div>
+                  <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                    Turn Timer
+                  </label>
+
+                  <select
+                    disabled={!isHost}
+                    value={turnTime}
+                    onChange={(e) => {
+                      const newTurnTime = Number(e.target.value);
+
+                      setTurnTime(newTurnTime);
+
+                      updateSettings({
+                        ...gameSettings,
+                        imposter: {
+                          ...gameSettings.imposter,
+                          turnTime: newTurnTime,
+                        },
+                      });
+                    }}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm sm:text-base outline-none hover:border-zinc-500 transition"
+                  >
+                    <option value={30}>30 seconds</option>
+                    <option value={45}>45 seconds</option>
+                    <option value={60}>60 seconds</option>
+                    <option value={90}>90 seconds</option>
+                    <option value={120}>120 seconds</option>
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  Lobby Chat
+                </label>
+
+                <button
+                  type="button"
+                  disabled={!isHost}
+                  onClick={() => {
+                    const newValue = !chatEnabled;
+
+                    setChatEnabled(newValue);
+
+                    updateSettings({
+                      ...gameSettings,
+                      chatEnabled: newValue,
+                    });
+                  }}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm sm:text-base transition ${
+                    chatEnabled
+                      ? "bg-green-700 border-green-500 hover:bg-green-600"
+                      : "bg-zinc-800 border-zinc-700 hover:bg-zinc-700"
+                  }`}
+                >
+                  {chatEnabled ? "Enabled" : "Disabled"}
+                </button>
+              </div>
 
               {/* Categories */}
               <div>
@@ -627,7 +755,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             </h2>
 
             <span className="text-sm text-gray-400">
-              {players.length}
+              {connectedPlayers.length}
             </span>
           </div>
 
@@ -708,19 +836,93 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             ))}
           </div>
         </section>
+        {/* Lock Lobby */}
         {isHost && (
-            <button
-                onClick={toggleLobbyLock}
-                className={`mt-3 w-full rounded-xl py-3 font-semibold transition ${
-                    lobbyLocked
-                        ? "bg-yellow-600 hover:bg-yellow-500"
-                        : "bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
-                }`}
-            >
-                {lobbyLocked
-                    ? "🔒 Lobby Locked"
-                    : "🔓 Lock Lobby"}
-            </button>
+          <button
+            onClick={toggleLobbyLock}
+            className={`mt-3 w-full rounded-xl py-3 font-semibold transition ${
+              lobbyLocked
+                ? "bg-yellow-600 hover:bg-yellow-500"
+                : "bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
+            }`}
+          >
+            {lobbyLocked
+              ? "🔒 Lobby Locked"
+              : "🔓 Lock Lobby"}
+          </button>
+        )}
+
+        {/* Lobby Chat */}
+        {chatEnabled && (
+          <section className="mt-3 w-full bg-zinc-900 rounded-2xl p-4 border border-zinc-800">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">
+                Lobby Chat
+              </h2>
+
+              <span className="text-xs text-gray-500">
+                {chatMessages.length}
+              </span>
+            </div>
+
+            <div className="h-52 overflow-y-auto flex flex-col gap-2 pr-1 mb-3">
+              {chatMessages.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center mt-8">
+                  No messages yet.
+                </p>
+              ) : (
+                chatMessages.map((chatMessage) => (
+                  <div
+                    key={chatMessage.id}
+                    className={`rounded-xl px-3 py-2 ${
+                      chatMessage.playerId === playerId
+                        ? "bg-blue-600/20 border border-blue-500/30"
+                        : "bg-zinc-800"
+                    }`}
+                  >
+                    <p className="text-xs text-gray-400 mb-1">
+                      {chatMessage.playerName}
+                    </p>
+
+                    <p className="text-sm break-words">
+                      {chatMessage.message}
+                    </p>
+                  </div>
+                ))
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                maxLength={200}
+                placeholder="Send a message..."
+                onChange={(e) =>
+                  setChatInput(e.target.value)
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    sendChatMessage();
+                  }
+                }}
+                className="min-w-0 flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500"
+              />
+
+              <button
+                onClick={sendChatMessage}
+                disabled={!chatInput.trim()}
+                className="shrink-0 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 px-4 rounded-xl text-sm font-semibold transition"
+              >
+                Send
+              </button>
+            </div>
+
+            <p className="mt-2 text-[10px] text-right text-gray-600">
+              {chatInput.length} / 200
+            </p>
+          </section>
         )}
       </div>
       {showCategoryModal && (
