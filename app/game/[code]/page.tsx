@@ -45,6 +45,7 @@ type GameState = {
   votedPlayerName?: string;
   votedPlayerRole?: "imposter" | "innocent";
   innocentsWin?: boolean;
+  endReason?: "normal" | "host-ended";
 };
 
 export default function GamePage({ params }: GamePageProps) {
@@ -67,6 +68,8 @@ export default function GamePage({ params }: GamePageProps) {
   const [transitionCountdown, setTransitionCountdown] = useState(3);
 
   const [showRevealedRole, setShowRevealedRole] = useState(false);
+
+  const [hostAction, setHostAction] = useState<"end-game" | "return-lobby" | null>(null);
 
   useEffect(() => {
     const storedPlayerId = getPlayerId();
@@ -205,6 +208,8 @@ export default function GamePage({ params }: GamePageProps) {
   const currentPlayer = gameState?.players.find(
     (player) => player.id === playerId
   );
+  
+  const isHost = currentPlayer?.isHost;
 
   const eliminatedPlayers =
     gameState?.eliminatedPlayers || [];
@@ -214,7 +219,9 @@ export default function GamePage({ params }: GamePageProps) {
 
   const activePlayers =
     gameState?.players.filter(
-      (player) => !eliminatedPlayers.includes(player.id)
+      (player) =>
+        !eliminatedPlayers.includes(player.id) &&
+        player.connected !== false
     ) || [];
 
   const imposters =
@@ -254,6 +261,101 @@ export default function GamePage({ params }: GamePageProps) {
     setHasSubmittedVote(true);
   }
 
+  function renderHostControls() {
+    if (!isHost) return null;
+
+    return (
+      <div className="mt-6 w-full max-w-80 border-t border-zinc-800 pt-5">
+        <p className="text-xs uppercase tracking-wide text-gray-500 text-center mb-3">
+          Host Controls
+        </p>
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() =>
+              setHostAction("end-game")
+            }
+            className="w-full bg-red-900/60 border border-red-800 px-6 py-3 rounded-xl hover:bg-red-800 transition"
+          >
+            End Game
+          </button>
+
+          <button
+            onClick={() =>
+              setHostAction("return-lobby")
+            }
+            className="w-full bg-zinc-800 border border-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-700 transition"
+          >
+            Return Everyone to Lobby
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderHostActionModal() {
+    if (!hostAction) return null;
+
+    return (
+      <div
+        onClick={() => setHostAction(null)}
+        className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl"
+        >
+          <h2 className="text-2xl font-bold text-center mb-3">
+            {hostAction === "end-game"
+              ? "End Game?"
+              : "Return Everyone?"}
+          </h2>
+
+          <p className="text-sm text-gray-400 text-center mb-6">
+            {hostAction === "end-game"
+              ? "This will immediately end the current game for everyone."
+              : "This will cancel the current game and send everyone back to the lobby."}
+          </p>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setHostAction(null)}
+              className="flex-1 bg-zinc-700 hover:bg-zinc-600 px-4 py-3 rounded-xl transition"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={() => {
+                if (hostAction === "end-game") {
+                  socket.emit("host-end-game", {
+                    code,
+                  });
+                } else {
+                  socket.emit(
+                    "host-return-everyone",
+                    { code }
+                  );
+                }
+
+                setHostAction(null);
+              }}
+              className={`flex-1 px-4 py-3 rounded-xl font-semibold transition ${
+                hostAction === "end-game"
+                  ? "bg-red-700 hover:bg-red-600"
+                  : "bg-blue-600 hover:bg-blue-500"
+              }`}
+            >
+              {hostAction === "end-game"
+                ? "End Game"
+                : "Return Everyone"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (gameState.phase === "transition") {
     return (
       <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4">
@@ -268,6 +370,8 @@ export default function GamePage({ params }: GamePageProps) {
         <p className="text-7xl sm:text-8xl font-bold font-mono">
           {transitionCountdown}
         </p>
+        {renderHostControls()}
+        {renderHostActionModal()}
       </main>
     );
   }
@@ -304,6 +408,7 @@ export default function GamePage({ params }: GamePageProps) {
           .filter(
             (player) =>
               !eliminatedPlayers.includes(player.id) &&
+              player.connected !== false &&
               player.id !== playerId
           )
           .map((player) => (
@@ -382,6 +487,8 @@ export default function GamePage({ params }: GamePageProps) {
         >
           Return to Lobby
         </button>
+        {renderHostControls()}
+        {renderHostActionModal()}
       </main>
     );
   }
@@ -414,6 +521,8 @@ export default function GamePage({ params }: GamePageProps) {
               : "INNOCENT"}
           </p>
         )}
+        {renderHostControls()}
+        {renderHostActionModal()}
       </main>
     );
   }
@@ -431,32 +540,46 @@ export default function GamePage({ params }: GamePageProps) {
           {gameState.word}
         </p>
 
-        <div className="text-center mb-8">
-          <p className="text-xl text-gray-300 mb-3">
-            {gameState.votedPlayerName} was voted out.
-          </p>
+        {gameState.endReason === "host-ended" ? (
+          <div className="text-center mb-8">
+            <p className="text-2xl font-bold text-yellow-400">
+              Game Ended by Host
+            </p>
 
-          <p className="text-2xl font-bold mb-6">
-            They were{" "}
-            {gameState.votedPlayerRole === "imposter"
-              ? "the Imposter!"
-              : "Innocent."}
-          </p>
-        </div>
+            <p className="mt-2 text-gray-400">
+              The game was ended early.
+            </p>
+          </div>
+        ) : (
+          <div className="text-center mb-8">
+            <p className="text-xl text-gray-300 mb-3">
+              {gameState.votedPlayerName} was voted out.
+            </p>
 
-        <p
-          className={`text-4xl font-bold ${
-            gameState.innocentsWin
-              ? "text-green-500"
-              : "text-red-500"
-          }`}
-        >
-          {gameState.innocentsWin
-            ? "Innocents Win!"
-            : imposters.length === 1
-            ? "Imposter Wins!"
-            : "Imposters Win!"}
-        </p>
+            <p className="text-2xl font-bold mb-6">
+              They were{" "}
+              {gameState.votedPlayerRole === "imposter"
+                ? "the Imposter!"
+                : "Innocent."}
+            </p>
+          </div>
+        )}
+
+        {gameState.endReason !== "host-ended" && (
+          <p
+            className={`text-4xl font-bold ${
+              gameState.innocentsWin
+                ? "text-green-500"
+                : "text-red-500"
+            }`}
+          >
+            {gameState.innocentsWin
+              ? "Innocents Win!"
+              : imposters.length === 1
+              ? "Imposter Wins!"
+              : "Imposters Win!"}
+          </p>
+        )}
 
         <div className="mt-8 mb-8 w-full max-w-sm">
           <h2 className="text-xl font-semibold text-center mb-3">
@@ -641,6 +764,8 @@ export default function GamePage({ params }: GamePageProps) {
                   className={`px-4 py-2 rounded-xl ${
                     eliminatedPlayers.includes(player.id)
                       ? "bg-zinc-900 text-zinc-500 line-through opacity-60"
+                      : player.connected === false
+                      ? "bg-zinc-900 text-zinc-500 opacity-60"
                       : index === gameState.currentTurn
                       ? "bg-blue-600 ring-2 ring-blue-400 scale-[1.03] animate-pulse"
                       : gameState.spokenPlayers.includes(index)
@@ -649,6 +774,12 @@ export default function GamePage({ params }: GamePageProps) {
                   }`}
                 >
                   {player.name}
+                  {player.connected === false &&
+                    !eliminatedPlayers.includes(player.id) && (
+                      <span className="ml-2 text-xs text-yellow-400">
+                        Reconnecting...
+                      </span>
+                  )}
                   {eliminatedPlayers.includes(player.id) && (
                     <span className="ml-2 text-xs text-red-400">
                       Eliminated
@@ -796,6 +927,9 @@ export default function GamePage({ params }: GamePageProps) {
           >
             Return to Lobby
           </button>
+
+          {/* Host Controls */}
+          {renderHostControls()}
         </section>
       </div>
 
@@ -836,6 +970,8 @@ export default function GamePage({ params }: GamePageProps) {
             </div>
           </div>
       )}
+      {renderHostActionModal()}
+
     </main>
   );
 }

@@ -49,6 +49,247 @@ function getActivePlayers(gameState: any) {
   );
 }
 
+function resolveVotes(
+  io: Server,
+  code: string,
+  lobby: any
+) {
+  if (!lobby?.gameState) return;
+
+  const voteResults = Object.entries(
+    lobby.gameState.votes || {}
+  ).map(([voterId, targetId]) => {
+    const voter = lobby.gameState.players.find(
+      (player: any) => player.id === voterId
+    );
+
+    const target =
+      targetId === "skip"
+        ? undefined
+        : lobby.gameState.players.find(
+            (player: any) =>
+              player.id === targetId
+          );
+
+    return {
+      voter: voter?.name || "Unknown Player",
+      target:
+        targetId === "skip"
+          ? "Skip"
+          : target?.name || "Unknown Player",
+    };
+  });
+
+  lobby.gameState.voteResults = voteResults;
+
+  const voteTotals: Record<string, number> = {};
+
+  Object.values(
+    lobby.gameState.votes || {}
+  ).forEach((submittedVote: any) => {
+    voteTotals[submittedVote] =
+      (voteTotals[submittedVote] || 0) + 1;
+  });
+
+  const voteTargets =
+    Object.keys(voteTotals);
+
+  // Safety check
+  if (voteTargets.length === 0) {
+    return;
+  }
+
+  const highestVoteCount = Math.max(
+    ...Object.values(voteTotals)
+  );
+
+  const highestVotes =
+    voteTargets.filter(
+      (target) =>
+        voteTotals[target] === highestVoteCount
+    );
+
+  // Tie
+  if (highestVotes.length > 1) {
+    lobby.gameState.phase = "transition";
+
+    lobby.gameState.roundMessage =
+      "The vote ended in a tie. Next round starting...";
+
+    io.to(code).emit(
+      "lobby-update",
+      lobby
+    );
+
+    setTimeout(() => {
+      if (!lobbies[code]?.gameState) return;
+
+      startNextRound(
+        lobby,
+        "The vote ended in a tie. Discussion continues.",
+        voteResults
+      );
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+    }, 3000);
+
+    return;
+  }
+
+  const winningVote = highestVotes[0];
+
+  // Skip wins
+  if (winningVote === "skip") {
+    lobby.gameState.phase = "transition";
+
+    lobby.gameState.roundMessage =
+      "The group voted to skip. Next round starting...";
+
+    io.to(code).emit(
+      "lobby-update",
+      lobby
+    );
+
+    setTimeout(() => {
+      if (!lobbies[code]?.gameState) return;
+
+      startNextRound(
+        lobby,
+        "The group voted to skip. Discussion continues.",
+        voteResults
+      );
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+    }, 3000);
+
+    return;
+  }
+
+  const votedPlayer =
+    lobby.gameState.players.find(
+      (player: any) =>
+        player.id === winningVote
+    );
+
+  // Target disappeared before vote resolution
+  if (!votedPlayer) {
+    startNextRound(
+      lobby,
+      "The voted player is no longer in the game. Discussion continues.",
+      voteResults
+    );
+
+    io.to(code).emit(
+      "lobby-update",
+      lobby
+    );
+
+    return;
+  }
+
+  lobby.gameState.roundMessage = undefined;
+
+  lobby.gameState.votedPlayerId =
+    votedPlayer.id;
+
+  lobby.gameState.votedPlayerName =
+    votedPlayer.name;
+
+  lobby.gameState.votedPlayerRole =
+    votedPlayer.role;
+
+  if (!lobby.gameState.eliminatedPlayers) {
+    lobby.gameState.eliminatedPlayers = [];
+  }
+
+  if (
+    !lobby.gameState.eliminatedPlayers.includes(
+      votedPlayer.id
+    )
+  ) {
+    lobby.gameState.eliminatedPlayers.push(
+      votedPlayer.id
+    );
+  }
+
+  lobby.gameState.phase = "reveal";
+
+  io.to(code).emit(
+    "lobby-update",
+    lobby
+  );
+
+  setTimeout(() => {
+    if (!lobbies[code]?.gameState) return;
+
+    const remainingImposters =
+      lobby.gameState.players.filter(
+        (player: any) =>
+          player.role === "imposter" &&
+          !lobby.gameState.eliminatedPlayers.includes(
+            player.id
+          ) &&
+          player.connected !== false
+      );
+
+    const remainingInnocents =
+      lobby.gameState.players.filter(
+        (player: any) =>
+          player.role === "innocent" &&
+          !lobby.gameState.eliminatedPlayers.includes(
+            player.id
+          ) &&
+          player.connected !== false
+      );
+
+    // All imposters eliminated
+    if (remainingImposters.length === 0) {
+      lobby.gameState.innocentsWin = true;
+      lobby.gameState.phase = "results";
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+
+      return;
+    }
+
+    // Imposters reach parity
+    if (
+      remainingImposters.length >=
+      remainingInnocents.length
+    ) {
+      lobby.gameState.innocentsWin = false;
+      lobby.gameState.phase = "results";
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+
+      return;
+    }
+
+    startNextRound(
+      lobby,
+      `${votedPlayer.name} was eliminated.`,
+      voteResults
+    );
+
+    io.to(code).emit(
+      "lobby-update",
+      lobby
+    );
+  }, 3000);
+}
+
 export function setupSocket(server: any) {
   const io = new Server(server, {
     cors: {
@@ -326,6 +567,58 @@ export function setupSocket(server: any) {
       io.to(code).emit("lobby-update", lobby);
     });
 
+    socket.on("host-end-game", ({ code }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby?.gameState) return;
+
+      const host = lobby.gameState.players.find(
+        (player: any) =>
+          player.socketId === socket.id
+      );
+
+      if (!host?.isHost) return;
+
+      lobby.gameState.endReason = "host-ended";
+      lobby.gameState.phase = "results";
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+    });
+
+    socket.on("host-return-everyone", ({ code }) => {
+      const lobby = lobbies[code];
+
+      if (!lobby) return;
+
+      const host = lobby.players.find(
+        (player: any) =>
+          player.socketId === socket.id
+      );
+
+      if (!host?.isHost) return;
+
+      lobby.gameStarted = false;
+      lobby.gameState = null;
+
+      lobby.players = lobby.players.map(
+        (player: any) => ({
+          ...player,
+          isReady: false,
+          location: "lobby",
+        })
+      );
+
+      io.to(code).emit("return-to-lobby");
+
+      io.to(code).emit(
+        "lobby-update",
+        lobby
+      );
+    });
+
     //game start
     socket.on("start-game", ({ code }) => {
         const lobby = lobbies[code];
@@ -415,6 +708,7 @@ export function setupSocket(server: any) {
           voteResults: [],
           playAgainVotes: {},
           eliminatedPlayers: [],
+          endReason: "normal",
 
           players: players.map((player: any, index: number) => ({
             ...player,
@@ -504,6 +798,7 @@ export function setupSocket(server: any) {
         lobby.gameState.players.some(
           (player: any) =>
             player.id === vote &&
+            player.connected !== false &&
             !lobby.gameState.eliminatedPlayers?.includes(
               player.id
             )
@@ -522,190 +817,29 @@ export function setupSocket(server: any) {
 
       lobby.gameState.votes[voter.id] = vote;
 
-      const voteCount = Object.keys(lobby.gameState.votes).length;
-
-      const totalPlayers = getActivePlayers(lobby.gameState).length;
-
-      const voteResults = Object.entries(
+      const voteCount = Object.keys(
         lobby.gameState.votes
-      ).map(([voterId, targetId]) => {
-        const voter = lobby.gameState.players.find(
-          (player: any) => player.id === voterId
-        );
+      ).length;
 
-        const target =
-          targetId === "skip"
-            ? undefined
-            : lobby.gameState.players.find(
-                (player: any) => player.id === targetId
-              );
+      const totalPlayers =
+        getActivePlayers(
+          lobby.gameState
+        ).length;
 
-        return {
-          voter: voter?.name || "Unknown Player",
-          target:
-            targetId === "skip"
-              ? "Skip"
-              : target?.name || "Unknown Player",
-        };
-      });
-
-      lobby.gameState.voteResults = voteResults;
       if (voteCount < totalPlayers) {
-        io.to(code).emit("lobby-update", lobby);
-        return;
-      }
-
-      const voteTotals: Record<string, number> = {};
-
-      Object.values(lobby.gameState.votes).forEach((submittedVote: any) => {
-        voteTotals[submittedVote] =
-          (voteTotals[submittedVote] || 0) + 1;
-      });
-
-      const highestVoteCount = Math.max(...Object.values(voteTotals));
-
-      const highestVotes = Object.keys(voteTotals).filter(
-        (target) => voteTotals[target] === highestVoteCount
-      );
-
-      // Tie vote
-      if (highestVotes.length > 1) {
-        lobby.gameState.phase = "transition";
-        lobby.gameState.roundMessage =
-          "The vote ended in a tie. Next round starting...";
-
-        lobby.gameState.voteResults = voteResults;
-
-        // Show transition screen immediately
-        io.to(code).emit("lobby-update", lobby);
-
-        setTimeout(() => {
-          // Make sure the lobby/game still exists
-          if (!lobbies[code]?.gameState) return;
-
-          startNextRound(
-            lobby,
-            "The vote ended in a tie. Discussion continues.",
-            voteResults
-          );
-
-          io.to(code).emit("lobby-update", lobby);
-        }, 3000);
-
-        return;
-      }
-
-      const winningVote = highestVotes[0];
-
-      // Skip vote won
-      if (winningVote === "skip") {
-        lobby.gameState.phase = "transition";
-        lobby.gameState.roundMessage = "The group voted to skip. Next round starting...";
-
-        lobby.gameState.voteResults = voteResults;
-
-        // Show transition screen immediately
-        io.to(code).emit("lobby-update", lobby);
-
-        setTimeout(() => {
-          if (!lobbies[code]?.gameState) return;
-
-          startNextRound(
-            lobby,
-            "The group voted to skip. Discussion continues.",
-            voteResults
-          );
-
-          io.to(code).emit("lobby-update", lobby);
-        }, 3000);
-
-        return;
-      }
-
-      const votedPlayer = lobby.gameState.players.find(
-        (player: any) => player.id === winningVote
-      );
-
-      lobby.gameState.roundMessage = undefined;
-      lobby.gameState.voteResults = voteResults;
-
-      lobby.gameState.votedPlayerId = winningVote;
-
-      lobby.gameState.votedPlayerName =
-        votedPlayer?.name || "Unknown Player";
-
-      lobby.gameState.votedPlayerRole =
-        votedPlayer?.role || "innocent";
-
-      if (!lobby.gameState.eliminatedPlayers) {
-        lobby.gameState.eliminatedPlayers = [];
-      }
-
-      if (
-        votedPlayer &&
-        !lobby.gameState.eliminatedPlayers.includes(
-          votedPlayer.id
-        )
-      ) {
-        lobby.gameState.eliminatedPlayers.push(
-          votedPlayer.id
-        );
-      }
-
-      lobby.gameState.phase = "reveal";
-
-      io.to(code).emit("lobby-update", lobby);
-
-      setTimeout(() => {
-        if (!lobbies[code]?.gameState) return;
-
-        const remainingImposters =
-          lobby.gameState.players.filter(
-            (player: any) =>
-              player.role === "imposter" &&
-              !lobby.gameState.eliminatedPlayers.includes(
-                player.id
-              )
-          );
-
-        const remainingInnocents =
-          lobby.gameState.players.filter(
-            (player: any) =>
-              player.role === "innocent" &&
-              !lobby.gameState.eliminatedPlayers.includes(
-                player.id
-              )
-          );
-
-        if (remainingImposters.length === 0) {
-          lobby.gameState.innocentsWin = true;
-          lobby.gameState.phase = "results";
-
-          io.to(code).emit("lobby-update", lobby);
-          return;
-        }
-
-        if (
-          remainingImposters.length >=
-          remainingInnocents.length
-        ) {
-          lobby.gameState.innocentsWin = false;
-          lobby.gameState.phase = "results";
-
-          io.to(code).emit("lobby-update", lobby);
-          return;
-        }
-
-        startNextRound(
-          lobby,
-          `${votedPlayer?.name} was eliminated.`,
-          voteResults
+        io.to(code).emit(
+          "lobby-update",
+          lobby
         );
 
-        io.to(code).emit("lobby-update", lobby);
-      }, 3000);
+        return;
+      }
 
-      return;
+      resolveVotes(
+        io,
+        code,
+        lobby
+      );
     });
 
     //play again
@@ -820,6 +954,7 @@ export function setupSocket(server: any) {
         currentTurn: startingPlayer,
         round: 1,
         spokenPlayers: [],
+        endReason: "normal",
 
         votes: {},
         roundMessage: undefined,
@@ -910,6 +1045,44 @@ export function setupSocket(server: any) {
         leavingGamePlayer.socketId = null;
       }
 
+      // If the current speaker disconnects,
+      // immediately move to the next active player.
+      if (
+        leavingGamePlayer &&
+        lobby.gameState?.phase === "discussion"
+      ) {
+        const currentPlayer =
+          lobby.gameState.players[
+            lobby.gameState.currentTurn
+          ];
+
+        if (currentPlayer?.id === leavingPlayerId) {
+          const activePlayers =
+            getActivePlayers(lobby.gameState);
+
+          // Only continue if someone else is active.
+          if (activePlayers.length > 0) {
+            let nextIndex =
+              (lobby.gameState.currentTurn + 1) %
+              lobby.gameState.players.length;
+
+            while (
+              lobby.gameState.eliminatedPlayers?.includes(
+                lobby.gameState.players[nextIndex].id
+              ) ||
+              lobby.gameState.players[nextIndex]
+                .connected === false
+            ) {
+              nextIndex =
+                (nextIndex + 1) %
+                lobby.gameState.players.length;
+            }
+
+            lobby.gameState.currentTurn = nextIndex;
+          }
+        }
+      }
+
       io.to(code).emit("lobby-update", lobby);
 
       setTimeout(() => {
@@ -948,28 +1121,51 @@ export function setupSocket(server: any) {
 
         // Host did not reconnect
         if (currentPlayer.isHost) {
-          currentLobby.gameStarted = false;
-          currentLobby.gameState = null;
-
-          currentLobby.players =
-            currentLobby.players.map(
-              (player: any, index: number) => ({
-                ...player,
-                isHost: index === 0,
-                isReady: false,
-                location: "lobby",
-              })
+          // Find another connected player to become host
+          const newHost =
+            currentLobby.players.find(
+              (player: any) =>
+                player.connected !== false
             );
 
-          io.to(code).emit("return-to-lobby");
+          // Nobody remains in the lobby
+          if (!newHost) {
+            delete lobbies[code];
+            return;
+          }
+
+          // Remove old host from active game
+          if (currentLobby.gameState?.players) {
+            currentLobby.gameState.players =
+              currentLobby.gameState.players.filter(
+                (player: any) =>
+                  player.id !== leavingPlayerId
+              );
+          }
+
+          // Make sure only one lobby player is host
+          currentLobby.players.forEach(
+            (player: any) => {
+              player.isHost = false;
+            }
+          );
+
+          newHost.isHost = true;
+
+          // Sync host status into active game
+          if (currentLobby.gameState?.players) {
+            currentLobby.gameState.players.forEach(
+              (player: any) => {
+                player.isHost =
+                  player.id === newHost.id;
+              }
+            );
+          }
+
           io.to(code).emit(
             "lobby-update",
             currentLobby
           );
-
-          if (currentLobby.players.length === 0) {
-            delete lobbies[code];
-          }
 
           return;
         }
@@ -1043,6 +1239,34 @@ export function setupSocket(server: any) {
             );
 
             return;
+          }
+
+          // Check whether voting can finish
+          // after a player disconnects
+          if (
+            currentLobby.gameState.phase === "voting"
+          ) {
+            const voteCount = Object.keys(
+              currentLobby.gameState.votes || {}
+            ).length;
+
+            const totalPlayers =
+              getActivePlayers(
+                currentLobby.gameState
+              ).length;
+
+            if (
+              totalPlayers > 0 &&
+              voteCount >= totalPlayers
+            ) {
+              resolveVotes(
+                io,
+                code,
+                currentLobby
+              );
+
+              return;
+            }
           }
 
           // Restart discussion if someone leaves
