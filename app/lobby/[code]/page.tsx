@@ -43,6 +43,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     isHost: boolean;
     location: string;
     connected?: boolean;
+    waitingForNextGame?: boolean;
   };
 
   type ChatMessage = {
@@ -303,6 +304,12 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   const isHost = currentPlayer?.isHost;
 
   const connectedPlayers = players.filter(
+    (player) =>
+      player.connected !== false &&
+      !player.waitingForNextGame
+  );
+
+  const totalConnectedPlayers = players.filter(
     (player) => player.connected !== false
   );
 
@@ -678,19 +685,26 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
             <button
               onClick={toggleReady}
-              disabled={!currentPlayerName || currentPlayer?.connected === false}
+              disabled={
+                !currentPlayerName ||
+                currentPlayer?.connected === false ||
+                currentPlayer?.waitingForNextGame
+              }
               className="
-              inline-flex
-              items-center
-              justify-center
-              px-8
-              py-3
-              rounded-xl
-              bg-blue-600
-              hover:bg-blue-500
-              font-semibold
-              mx-auto
-              transition
+                inline-flex
+                items-center
+                justify-center
+                px-8
+                py-3
+                rounded-xl
+                bg-blue-600
+                hover:bg-blue-500
+                font-semibold
+                mx-auto
+                transition
+                disabled:bg-zinc-700
+                disabled:text-zinc-400
+                disabled:cursor-not-allowed
               "
             >
               {currentPlayer?.isReady ? "Unready" : "Ready"}
@@ -755,7 +769,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             </h2>
 
             <span className="text-sm text-gray-400">
-              {connectedPlayers.length}
+              {totalConnectedPlayers.length}
             </span>
           </div>
 
@@ -797,13 +811,21 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                       Reconnecting...
                     </span>
                   )}
+
+                  {player.waitingForNextGame &&
+                    player.connected !== false && (
+                      <span className="inline-block mt-1 text-[10px] text-yellow-400">
+                        Waiting for next game
+                      </span>
+                  )}
                 </div>
 
                 <div className="shrink-0 flex items-center gap-1">
-                  {player.isReady && (
-                    <span className="text-[10px] bg-green-500 text-black px-2 py-1 rounded-full">
-                      Ready
-                    </span>
+                  {player.isReady &&
+                    !player.waitingForNextGame && (
+                      <span className="text-[10px] bg-green-500 text-black px-2 py-1 rounded-full">
+                        Ready
+                      </span>
                   )}
 
                   {player.isHost && (
@@ -812,9 +834,11 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                     </span>
                   )}
 
-                {isHost &&
-                  !player.isHost &&
-                  player.id !== playerId && (
+                  {isHost &&
+                    !player.isHost &&
+                    player.id !== playerId &&
+                    !player.waitingForNextGame &&
+                    player.connected !== false && (
                     <>
                       <button
                         onClick={() => setHostTransferTarget(player)}

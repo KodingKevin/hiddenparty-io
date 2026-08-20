@@ -14,7 +14,7 @@ type GamePageProps = {
 type GamePlayer = {
   id: string;
   name: string;
-  role: "imposter" | "innocent";
+  role?: "imposter" | "innocent";
   isHost: boolean;
   connected?: boolean;
 };
@@ -22,30 +22,52 @@ type GamePlayer = {
 type GameState = {
   mode: string;
   category: string;
-  word: string;
+
+  word?: string;
+
   imposterMode: string;
-  imposterWord: string;
+
+  imposterWord?: string;
+
   turnTime: number;
-  phase: "discussion" | "voting" | "transition" | "reveal" | "results";
+
+  phase:
+    | "discussion"
+    | "voting"
+    | "transition"
+    | "reveal"
+    | "results";
+
   currentTurn: number;
   round: number;
+
   spokenPlayers: number[];
+
   votes?: Record<string, string>;
 
   roundMessage?: string;
+
   voteResults?: {
     voter: string;
     target: string;
   }[];
 
   eliminatedPlayers?: string[];
-  playAgainVotes?: Record<string, boolean>;
+
+  playAgainCount?: number;
+  hasPressedPlayAgain?: boolean;
+
   players: GamePlayer[];
+
   votedPlayerId?: string;
   votedPlayerName?: string;
   votedPlayerRole?: "imposter" | "innocent";
+
   innocentsWin?: boolean;
-  endReason?: "normal" | "host-ended";
+
+  endReason?:
+    | "normal"
+    | "host-ended";
 };
 
 export default function GamePage({ params }: GamePageProps) {
@@ -89,26 +111,56 @@ export default function GamePage({ params }: GamePageProps) {
     });
 
     const handleLobbyUpdate = (updatedLobby: any) => {
-      console.log("Game lobby update:", updatedLobby);
+      console.log(
+        "Game lobby update:",
+        updatedLobby
+      );
 
       if (!updatedLobby?.gameState) {
         router.push(`/lobby/${code}`);
         return;
       }
 
-      setGameState(updatedLobby.gameState);
+      const activeGamePlayer =
+        updatedLobby.gameState.players?.find(
+          (player: any) =>
+            player.id === storedPlayerId
+        );
+
+      if (!activeGamePlayer) {
+        router.push(`/lobby/${code}`);
+        return;
+      }
+
+      setGameState(
+        updatedLobby.gameState
+      );
     };
 
     const handleReturnToLobby = () => {
       router.push(`/lobby/${code}`);
     };
 
-    socket.on("lobby-update", handleLobbyUpdate);
-    socket.on("return-to-lobby", handleReturnToLobby);
+    socket.on(
+      "lobby-update",
+      handleLobbyUpdate
+    );
+
+    socket.on(
+      "return-to-lobby",
+      handleReturnToLobby
+    );
 
     return () => {
-      socket.off("lobby-update", handleLobbyUpdate);
-      socket.off("return-to-lobby", handleReturnToLobby);
+      socket.off(
+        "lobby-update",
+        handleLobbyUpdate
+      );
+
+      socket.off(
+        "return-to-lobby",
+        handleReturnToLobby
+      );
     };
   }, [code, router]);
 
@@ -234,13 +286,11 @@ export default function GamePage({ params }: GamePageProps) {
       (player) => player.connected !== false
     ) || [];
 
-  const hasPressedPlayAgain = Boolean(
-    gameState?.playAgainVotes?.[playerId || ""]
-  );
+  const hasPressedPlayAgain =
+    gameState?.hasPressedPlayAgain ?? false;
 
-  const playAgainCount = Object.keys(
-    gameState?.playAgainVotes || {}
-  ).length;
+  const playAgainCount =
+    gameState?.playAgainCount ?? 0;
 
   if (!gameState || !currentPlayer) {
     return (
