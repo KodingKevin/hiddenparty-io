@@ -4,6 +4,17 @@ import { gameWords } from "../library/gamewords";
 // Stores all active lobbies
 const lobbies: Record<string, any> = {};
 
+//store private session
+const playerSessions:
+  Record<
+    string,
+    Record<string, string>
+  > = {};
+
+//auto kick players once time is out
+const kickedPlayers:
+  Record<string, Set<string>> = {};
+
 //helper function to assist with voting logic
 type VoteResult = {
   voter: string;
@@ -47,6 +58,54 @@ function getActivePlayers(gameState: any) {
       !eliminatedPlayers.includes(player.id) &&
       player.connected !== false
   );
+}
+
+function isSocketInLobby(
+  socket: any,
+  code: unknown
+) {
+  if (!isValidLobbyCode(code)) {
+    return false;
+  }
+
+  return (
+    socket.data?.lobbyCode === code &&
+    Boolean(socket.data?.playerId)
+  );
+}
+
+function isValidLobbyCode(code: unknown) {
+  return (
+    typeof code === "string" &&
+    /^[A-Z0-9]{4,8}$/.test(code)
+  );
+}
+
+function isValidPlayerId(playerId: unknown) {
+  return (
+    typeof playerId === "string" &&
+    playerId.length >= 8 &&
+    playerId.length <= 100
+  );
+}
+
+function isValidPlayerToken(playerToken: unknown) {
+  return (
+    typeof playerToken === "string" &&
+    playerToken.length >= 16 &&
+    playerToken.length <= 200
+  );
+}
+
+function sanitizePlayerName(name: unknown) {
+  if (typeof name !== "string") {
+    return "";
+  }
+
+  return name
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 16);
 }
 
 function getLobbyForPlayer(
@@ -115,7 +174,7 @@ function getLobbyForPlayer(
         lobby.gameState.phase === "transition"
           ? lobby.gameState.roundMessage
           : undefined,
-          
+
       voteResults:
         lobby.gameState.phase === "reveal" ||
         lobby.gameState.phase === "results"
@@ -217,6 +276,59 @@ function emitLobbyUpdate(
         safeLobby
       );
     }
+  );
+}
+
+const socketRateLimits =
+  new Map<
+    string,
+    Record<
+      string,
+      {
+        count: number;
+        resetAt: number;
+      }
+    >
+  >();
+
+function isRateLimited(
+  socketId: string,
+  action: string,
+  maxRequests: number,
+  windowMs: number
+) {
+  const now = Date.now();
+
+  if (!socketRateLimits.has(socketId)) {
+    socketRateLimits.set(
+      socketId,
+      {}
+    );
+  }
+
+  const socketLimits =
+    socketRateLimits.get(socketId)!;
+
+  const current =
+    socketLimits[action];
+
+  if (
+    !current ||
+    now >= current.resetAt
+  ) {
+    socketLimits[action] = {
+      count: 1,
+      resetAt: now + windowMs,
+    };
+
+    return false;
+  }
+
+  current.count += 1;
+
+  return (
+    current.count >
+    maxRequests
   );
 }
 
@@ -555,13 +667,27 @@ function startPlayAgainGame(
         word !== randomWord
     );
 
+  const imposterMode =
+    lobby.settings?.imposter
+      ?.imposterMode ||
+    "no-word";
+
+  if (
+    imposterMode === "similar-word" &&
+    otherWords.length === 0
+  ) {
+    return;
+  }
+
   const similarWord =
-    otherWords[
-      Math.floor(
-        Math.random() *
-          otherWords.length
-      )
-    ];
+    imposterMode === "similar-word"
+      ? otherWords[
+          Math.floor(
+            Math.random() *
+            otherWords.length
+          )
+        ]
+      : undefined;
 
   const requestedImposterCount =
     lobby.settings?.imposter
@@ -593,11 +719,6 @@ function startPlayAgainGame(
         maxImposters
       )
     );
-
-  const imposterMode =
-    lobby.settings?.imposter
-      ?.imposterMode ||
-    "no-word";
 
   const startingPlayer =
     Math.floor(
@@ -700,7 +821,10 @@ export function setupSocket(server: any) {
     console.log("User connected:", socket.id);
     socket.on(
       "get-lobby",
-      ({ code, playerId }) => {
+      ({ code }) => {
+        if (!isSocketInLobby(socket, code)) {
+          return;
+        }
         if (!lobbies[code]) {
           lobbies[code] = {
             players: [],
@@ -714,6 +838,11 @@ export function setupSocket(server: any) {
 
         const lobby = lobbies[code];
 
+        const playerId =
+          socket.data.playerId;
+
+        // Socket has not joined as a player yet.
+        // Never expose an active game.
         if (!playerId) {
           socket.emit(
             "lobby-update",
@@ -742,7 +871,32 @@ export function setupSocket(server: any) {
     // Joining a lobby
     socket.on(
       "join-lobby",
-      ({ code, playerName, playerId }) => {
+      ({
+        code,
+        playerName,
+        playerId,
+        playerToken,
+      }) => {
+        // 1. Validate incoming values
+        if (
+          !isValidLobbyCode(code) ||
+          !isValidPlayerId(playerId) ||
+          !isValidPlayerToken(playerToken)
+        ) {
+          socket.emit(
+            "invalid-join-request"
+          );
+
+          return;
+        }
+
+        // 2. Sanitize name
+        const safePlayerName =
+          sanitizePlayerName(
+            playerName
+          );
+
+        // 3. Create lobby if necessary
         if (!lobbies[code]) {
           lobbies[code] = {
             players: [],
@@ -752,22 +906,104 @@ export function setupSocket(server: any) {
           };
         }
 
-        if (!playerId) return;
+        // 4. Prevent socket from switching rooms
+        if (
+          socket.data.lobbyCode &&
+          socket.data.lobbyCode !== code
+        ) {
+          socket.emit(
+            "already-in-another-lobby"
+          );
 
-        const lobby = lobbies[code];
-
-        const existingPlayer = lobby.players.find(
-          (player: any) => player.id === playerId
-        );
-
-        if (lobby.locked && !existingPlayer) {
-          socket.emit("lobby-locked");
           return;
         }
 
+        const lobby =
+          lobbies[code];
+
+        // 5. NOW existingPlayer exists
+        const existingPlayer =
+          lobby.players.find(
+            (player: any) =>
+              player.id === playerId
+          );
+
+        // 6. Rate-limit actual name changes
+        if (
+          existingPlayer &&
+          safePlayerName &&
+          safePlayerName !==
+            existingPlayer.name &&
+          isRateLimited(
+            socket.id,
+            "name-change",
+            5,
+            10000
+          )
+        ) {
+          return;
+        } 
+
+        // Locked lobby blocks brand-new players
+        if (
+          lobby.locked &&
+          !existingPlayer
+        ) {
+          socket.emit(
+            "lobby-locked"
+          );
+
+          return;
+        }
+
+        if (!playerSessions[code]) {
+          playerSessions[code] = {};
+        }
+
+        if (!kickedPlayers[code]) {
+          kickedPlayers[code] =
+            new Set<string>();
+        }
+
+        const savedToken =
+          playerSessions[code][playerId];
+
+        // A player explicitly kicked from this lobby
+        // cannot reclaim the same player identity.
+        if (
+          kickedPlayers[code].has(playerId)
+        ) {
+          socket.emit(
+            "kicked-from-lobby"
+          );
+
+          return;
+        }
+
+        if (savedToken) {
+          // This player ID already belongs
+          // to an existing browser/session.
+          if (savedToken !== playerToken) {
+            socket.emit(
+              "player-session-invalid"
+            );
+
+            return;
+          }
+        } else {
+          // Completely new player identity
+          playerSessions[code][playerId] =
+            playerToken;
+        }
+        
+        // Authentication succeeded.
+        // NOW bind this socket to the player.
+        socket.data.playerId = playerId;
+        socket.data.lobbyCode = code;
+
         if (existingPlayer) {
           existingPlayer.name =
-            playerName?.trim() || existingPlayer.name;
+            safePlayerName || existingPlayer.name;
 
           existingPlayer.socketId = socket.id;
           existingPlayer.connected = true;
@@ -808,7 +1044,7 @@ export function setupSocket(server: any) {
             id: playerId,
             socketId: socket.id,
             name:
-              playerName?.trim() ||
+              safePlayerName ||
               `Player ${playerNumber}`,
             isReady: false,
             isHost: lobby.players.length === 0,
@@ -832,9 +1068,32 @@ export function setupSocket(server: any) {
 
     // Sync settings through the server
     socket.on("update-settings", ({ code, settings }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      // Game settings cannot change
+      // while a match is active.
+      if (
+        lobby.gameStarted &&
+        lobby.gameState
+      ) {
+        return;
+      }
+
+      if (
+        isRateLimited(
+          socket.id,
+          "settings",
+          15,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const requestingPlayer = lobby.players.find(
         (player: any) =>
@@ -856,9 +1115,23 @@ export function setupSocket(server: any) {
     socket.on(
       "kick-player",
       ({ code, targetPlayerId }) => {
+        if (!isSocketInLobby(socket, code)) {
+          return;
+        }
         const lobby = lobbies[code];
 
         if (!lobby) return;
+
+        if (
+          isRateLimited(
+            socket.id,
+            "host-action",
+            10,
+            5000
+          )
+        ) {
+          return;
+        }
 
         const host =
           lobby.players.find(
@@ -879,8 +1152,35 @@ export function setupSocket(server: any) {
         // Host cannot kick themselves
         if (targetPlayer.isHost) return;
 
+        if (!kickedPlayers[code]) {
+          kickedPlayers[code] =
+            new Set<string>();
+        }
+
+        kickedPlayers[code].add(
+          targetPlayerId
+        );
+
         const targetSocketId =
           targetPlayer.socketId;
+
+        // Revoke the kicked player's socket authorization
+        if (targetSocketId) {
+          const targetSocket =
+            io.sockets.sockets.get(
+              targetSocketId
+            );
+
+          if (targetSocket) {
+            targetSocket.data.playerId =
+              undefined;
+
+            targetSocket.data.lobbyCode =
+              undefined;
+
+            targetSocket.leave(code);
+          }
+        }
 
         // Remove from main lobby
         lobby.players =
@@ -1093,9 +1393,23 @@ export function setupSocket(server: any) {
 
     //Toggle lock lobby
     socket.on("toggle-lobby-lock", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      if (
+        isRateLimited(
+          socket.id,
+          "host-action",
+          10,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const host = lobby.players.find(
         (player: any) => player.socketId === socket.id
@@ -1114,11 +1428,25 @@ export function setupSocket(server: any) {
 
     //chat abilities
     socket.on("send-chat-message", ({ code, message }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
 
       if (lobby.settings?.chatEnabled === false) {
+        return;
+      }
+
+      if (
+        isRateLimited(
+          socket.id,
+          "chat",
+          10,
+          5000
+        )
+      ) {
         return;
       }
 
@@ -1159,9 +1487,32 @@ export function setupSocket(server: any) {
 
     // Toggle ready status
     socket.on("toggle-ready", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      // Ready state only belongs to the lobby,
+      // not an active match.
+      if (
+        lobby.gameStarted &&
+        lobby.gameState
+      ) {
+        return;
+      }
+
+      if (
+        isRateLimited(
+          socket.id,
+          "ready",
+          5,
+          3000
+        )
+      ) {
+        return;
+      }
 
       const player = lobby.players.find(
         (player: any) =>
@@ -1185,9 +1536,23 @@ export function setupSocket(server: any) {
 
     //host control on transferring host role
     socket.on("transfer-host", ({ code, targetPlayerId }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      if (
+        isRateLimited(
+          socket.id,
+          "host-action",
+          10,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const currentHost = lobby.players.find(
         (player: any) => player.socketId === socket.id
@@ -1248,9 +1613,23 @@ export function setupSocket(server: any) {
     });
 
     socket.on("host-end-game", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby?.gameState) return;
+
+      if (
+        isRateLimited(
+          socket.id,
+          "host-action",
+          10,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const host = lobby.gameState.players.find(
         (player: any) =>
@@ -1270,9 +1649,23 @@ export function setupSocket(server: any) {
     });
 
     socket.on("host-return-everyone", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      if (
+        isRateLimited(
+          socket.id,
+          "host-action",
+          10,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const host = lobby.players.find(
         (player: any) =>
@@ -1304,110 +1697,138 @@ export function setupSocket(server: any) {
 
     //game start
     socket.on("start-game", ({ code }) => {
-        const lobby = lobbies[code];
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
+      const lobby = lobbies[code];
 
-        if (!lobby) return;
+      if (!lobby) return;
 
-        const players = lobby.players.filter(
-          (player: any) =>
-            player.connected !== false &&
-            !player.waitingForNextGame
-        );
+      // Do not allow another game to start
+      // while one is already running.
+      if (
+        lobby.gameStarted ||
+        lobby.gameState
+      ) {
+        return;
+      }
 
-        const requestingPlayer = players.find(
-          (player: any) => player.socketId === socket.id
-        );
+      const players = lobby.players.filter(
+        (player: any) =>
+          player.connected !== false &&
+          !player.waitingForNextGame
+      );
 
-        if (!requestingPlayer?.isHost) return;
+      const requestingPlayer = players.find(
+        (player: any) => player.socketId === socket.id
+      );
 
-        if (players.length < 3) return;
+      if (!requestingPlayer?.isHost) return;
 
-        const everyoneReady = players.every(
-          (player: any) => player.isReady
-        );
+      if (players.length < 3) return;
 
-        if (!everyoneReady) return;
+      const everyoneReady = players.every(
+        (player: any) => player.isReady
+      );
 
-        const selectedCategories =
-          lobby.settings?.categories?.length > 0
-            ? lobby.settings.categories
-            : Object.keys(gameWords);
+      if (!everyoneReady) return;
 
-        const categoryNames = selectedCategories.filter(
-          (category: string) => category in gameWords
-        );
+      const selectedCategories =
+        lobby.settings?.categories?.length > 0
+         ? lobby.settings.categories
+          : Object.keys(gameWords);
 
-        const randomCategory = categoryNames[Math.floor(Math.random() * categoryNames.length)];
+      const categoryNames = selectedCategories.filter(
+        (category: string) => category in gameWords
+      );
 
-        const words = gameWords[randomCategory as keyof typeof gameWords];
+      if (categoryNames.length === 0) {
+        return;
+      }
 
-        const randomWord = words[Math.floor(Math.random() * words.length)];
+      const randomCategory = categoryNames[Math.floor(Math.random() * categoryNames.length)];
 
-        const requestedImposterCount =
-               lobby.settings?.imposter?.imposterCount || 1;
+      const words = gameWords[randomCategory as keyof typeof gameWords];
 
-        const maxImposters = Math.max(
-          1,
-          Math.min(
-            requestedImposterCount,
-            players.length - 1
-          )
-        );
+      const randomWord = words[Math.floor(Math.random() * words.length)];
 
-        const shuffledIndexes = players
-          .map((_: any, index: number) => index)
-          .sort(() => Math.random() - 0.5);
+      const requestedImposterCount =
+             lobby.settings?.imposter?.imposterCount || 1;
 
-        const imposterIndexes = new Set(
-          shuffledIndexes.slice(0, maxImposters)
-        );
+      const maxImposters = Math.max(
+        1,
+        Math.min(
+          requestedImposterCount,
+          players.length - 1
+        )
+      );
 
-        const imposterMode = lobby.settings?.imposter?.imposterMode || "no-word";
+      const shuffledIndexes = players
+        .map((_: any, index: number) => index)
+        .sort(() => Math.random() - 0.5);
 
-        const otherWords = words.filter(
-          (word) => word !== randomWord
-        );
+      const imposterIndexes = new Set(
+        shuffledIndexes.slice(0, maxImposters)
+      );
 
-        const similarWord =
-          otherWords[
-            Math.floor(Math.random() * otherWords.length)
-          ];
+      const imposterMode = lobby.settings?.imposter?.imposterMode || "no-word";
 
-        const startingPlayer = Math.floor(Math.random() * players.length);
+      const otherWords = words.filter(
+        (word) => word !== randomWord
+      );
 
-        players.forEach(
-          (player: any) => {
-            player.location = "game";
-            player.waitingForNextGame = false;
-          }
-        );
+      if (
+        imposterMode === "similar-word" &&
+        otherWords.length === 0
+      ) {
+        return;
+      }
 
-        lobby.gameStarted = true;
-        lobby.gameState = {
-          mode : lobby.settings?.mode || "imposter",
-          category: randomCategory,
-          word: randomWord,
-          imposterMode,
-          imposterWord: similarWord,
-          turnTime: lobby.settings?.imposter?.turnTime || 45,
-          phase: "discussion",
-          currentTurn: startingPlayer,
-          round: 1,
-          spokenPlayers: [],
+      const similarWord =
+        imposterMode === "similar-word"
+          ? otherWords[
+              Math.floor(
+                Math.random() *
+                otherWords.length
+              )
+            ]
+          : undefined;
 
-          votes: {},
-          roundMessage: undefined,
-          voteResults: [],
-          playAgainVotes: {},
-          eliminatedPlayers: [],
-          endReason: "normal",
+      const startingPlayer = Math.floor(Math.random() * players.length);
 
-          players: players.map((player: any, index: number) => ({
-            ...player,
-            location:"game",
-            role: imposterIndexes.has(index) ? "imposter" : "innocent",
-          })),
-        };
+      players.forEach(
+        (player: any) => {
+          player.location = "game";
+          player.waitingForNextGame = false;
+        }
+      );
+
+      lobby.gameStarted = true;
+      lobby.gameState = {
+        mode : lobby.settings?.mode || "imposter",
+        category: randomCategory,
+        word: randomWord,
+        imposterMode,
+        imposterWord: similarWord,
+        turnTime: lobby.settings?.imposter?.turnTime || 45,
+        phase: "discussion",
+        currentTurn: startingPlayer,
+        round: 1,
+        spokenPlayers: [],
+
+        votes: {},
+        roundMessage: undefined,
+        voteResults: [],
+        playAgainVotes: {},
+        eliminatedPlayers: [],
+        endReason: "normal",
+
+        players: players.map((player: any, index: number) => ({
+          ...player,
+          location:"game",
+          role: imposterIndexes.has(index) ? "imposter" : "innocent",
+        })),
+      };
 
       players.forEach(
         (player: any) => {
@@ -1435,6 +1856,9 @@ export function setupSocket(server: any) {
     
     //next turn event
     socket.on("next-turn", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby?.gameState) return;
@@ -1495,10 +1919,24 @@ export function setupSocket(server: any) {
 
     //players sumbitting their votes at the voting phase
     socket.on("submit-vote", ({ code, vote }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby?.gameState) return;
       if (lobby.gameState.phase !== "voting") return;
+
+      if (
+        isRateLimited(
+          socket.id,
+          "vote",
+          3,
+          5000
+        )
+      ) {
+        return;
+      }
 
       const voter = lobby.gameState.players.find(
         (player: any) => player.socketId === socket.id
@@ -1569,6 +2007,9 @@ export function setupSocket(server: any) {
     socket.on(
       "play-again",
       ({ code }) => {
+        if (!isSocketInLobby(socket, code)) {
+          return;
+        }
         const lobby =
           lobbies[code];
 
@@ -1632,6 +2073,9 @@ export function setupSocket(server: any) {
 
     // return to lobby
     socket.on("return-to-lobby", ({ code }) => {
+      if (!isSocketInLobby(socket, code)) {
+        return;
+      }
       const lobby = lobbies[code];
 
       if (!lobby) return;
@@ -1853,6 +2297,9 @@ export function setupSocket(server: any) {
     
   // Disconnect handling
   socket.on("disconnect", () => {
+    socketRateLimits.delete(
+      socket.id
+    );
     console.log("User disconnected:", socket.id);
 
     for (const code in lobbies) {
@@ -1979,6 +2426,8 @@ export function setupSocket(server: any) {
           // Nobody remains in the lobby
           if (!newHost) {
             delete lobbies[code];
+            delete playerSessions[code];
+            delete kickedPlayers[code];
             return;
           }
 
@@ -2370,6 +2819,8 @@ export function setupSocket(server: any) {
 
         if (currentLobby.players.length === 0) {
           delete lobbies[code];
+          delete playerSessions[code];
+          delete kickedPlayers[code];
         }
       }, 15000);
     }

@@ -10,7 +10,10 @@ import { socket } from "@/src/library/socket";
 
 import { useRouter } from "next/navigation";
 
-import { getPlayerId } from "@/src/library/playerId";
+import {
+  getPlayerId,
+  getPlayerToken,
+} from "@/src/library/playerId";
 
 import { gameWords } from "@/src/library/gamewords";
 
@@ -104,7 +107,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
   //kick players
   const [kickTarget, setKickTarget] = useState<Player | null>(null);
-      
+    
+  //store and create a token for each player
+  const storedPlayerToken = getPlayerToken();
+
   useEffect(() => {
     const storedPlayerId = getPlayerId();
 
@@ -112,16 +118,23 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
     socket.connect();
 
-    socket.emit("get-lobby", {
-      code,
-      playerId: storedPlayerId,
-    });
-
     socket.emit("join-lobby", {
       code,
       playerName: "",
       playerId: storedPlayerId,
+      playerToken: storedPlayerToken,
     });
+
+    socket.emit("get-lobby", {
+      code,
+    });
+
+    socket.on(
+      "invalid-join-request",
+      () => {
+        router.push("/");
+      }
+    );
 
     socket.on("lobby-update", (lobby) => {
       console.log("Lobby updated:", lobby);
@@ -174,6 +187,13 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
       setLobbyLocked(Boolean(lobby.locked));
     });
+  
+    socket.on(
+      "already-in-another-lobby",
+      () => {
+        router.push("/");
+      }
+    );
 
     socket.on("lobby-locked", () => {
       router.push("/");
@@ -195,12 +215,22 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       router.push(`/game/${code}`);
     });
 
+    socket.on(
+      "player-session-invalid",
+      () => {
+        router.push("/");
+      }
+    );
+
     return () => {
       socket.off("lobby-update");
       socket.off("game-started");
       socket.off("kicked-from-lobby");
       socket.off("lobby-locked");
       socket.off("chat-message");
+      socket.off("player-session-invalid");
+      socket.off("already-in-another-lobby");
+      socket.off("invalid-join-request");
     };
   }, [code, router]);
 
@@ -241,6 +271,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       code,
       playerName: trimmedName,
       playerId,
+      playerToken: getPlayerToken(),
     });
 
     localStorage.setItem(`hiddenparty-name-${code}`, trimmedName);

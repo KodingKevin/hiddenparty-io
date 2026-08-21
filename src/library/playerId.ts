@@ -19,3 +19,21 @@ export function getPlayerId(): string {
 
   return newPlayerId;
 }
+
+export function getPlayerToken() {
+  const storageKey = "hiddenparty-player-token";
+
+  let token =
+    localStorage.getItem(storageKey);
+
+  if (!token) {
+    token = crypto.randomUUID();
+
+    localStorage.setItem(
+      storageKey,
+      token
+    );
+  }
+
+  return token;
+}

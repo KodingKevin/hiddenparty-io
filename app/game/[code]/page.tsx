@@ -3,7 +3,10 @@
 import { use, useEffect, useState } from "react";
 import { socket } from "@/src/library/socket";
 import { useRouter } from "next/navigation";
-import { getPlayerId } from "@/src/library/playerId";
+import {
+  getPlayerId,
+  getPlayerToken,
+} from "@/src/library/playerId";
 
 type GamePageProps = {
   params: Promise<{
@@ -93,6 +96,8 @@ export default function GamePage({ params }: GamePageProps) {
 
   const [hostAction, setHostAction] = useState<"end-game" | "return-lobby" | null>(null);
 
+  const storedPlayerToken = getPlayerToken();
+
   useEffect(() => {
     const storedPlayerId = getPlayerId();
 
@@ -103,11 +108,11 @@ export default function GamePage({ params }: GamePageProps) {
       code,
       playerName: "",
       playerId: storedPlayerId,
+      playerToken: storedPlayerToken,
     });
 
     socket.emit("get-lobby", {
       code,
-      playerId: storedPlayerId,
     });
 
     const handleLobbyUpdate = (updatedLobby: any) => {
@@ -141,6 +146,25 @@ export default function GamePage({ params }: GamePageProps) {
       router.push(`/lobby/${code}`);
     };
 
+    const handleInvalidSession = () => {
+      localStorage.removeItem(
+        "hiddenparty-player-id"
+      );
+
+      localStorage.removeItem(
+        "hiddenparty-player-token"
+      );
+
+      router.push("/");
+    };
+
+    socket.on(
+      "invalid-join-request",
+      () => {
+        router.push("/");
+      }
+    );
+
     socket.on(
       "lobby-update",
       handleLobbyUpdate
@@ -149,6 +173,18 @@ export default function GamePage({ params }: GamePageProps) {
     socket.on(
       "return-to-lobby",
       handleReturnToLobby
+    );
+
+    socket.on(
+      "already-in-another-lobby",
+      () => {
+        router.push("/");
+      }
+    );
+
+    socket.on(
+      "player-session-invalid",
+      handleInvalidSession
     );
 
     return () => {
@@ -160,6 +196,19 @@ export default function GamePage({ params }: GamePageProps) {
       socket.off(
         "return-to-lobby",
         handleReturnToLobby
+      );
+
+      socket.off(
+        "player-session-invalid",
+        handleInvalidSession
+      );
+
+      socket.off(
+        "already-in-another-lobby"
+      );
+
+      socket.off(
+        "invalid-join-request"
       );
     };
   }, [code, router]);
