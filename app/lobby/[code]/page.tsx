@@ -102,6 +102,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   //lock lobby state
   const [lobbyLocked, setLobbyLocked] = useState(false);
 
+  const [startError, setStartError] = useState<string | null>(null);
+
   //transfer host role
   const [hostTransferTarget, setHostTransferTarget] = useState<Player | null>(null);
 
@@ -111,8 +113,24 @@ export default function LobbyPage({ params }: LobbyPageProps) {
   //store and create a token for each player
   const storedPlayerToken = getPlayerToken();
 
+  const [connectionState, setConnectionState] =
+    useState<"connecting" | "connected" | "reconnecting">(
+      "connecting"
+    );
+
   useEffect(() => {
     const storedPlayerId = getPlayerId();
+
+    const handleConnect = () => {
+      setConnectionState("connected");
+    };
+
+    const handleDisconnect = () => {
+      setConnectionState("reconnecting");
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
 
     setPlayerId(storedPlayerId);
 
@@ -136,9 +154,14 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       }
     );
 
-    socket.on("lobby-update", (lobby) => {
-      console.log("Lobby updated:", lobby);
+    socket.on(
+      "start-game-error",
+      ({ message }) => {
+        setStartError(message);
+      }
+    );
 
+    socket.on("lobby-update", (lobby) => {
       setPlayers(lobby.players);
 
       if (lobby.chatMessages){
@@ -211,7 +234,6 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     });
 
     socket.on("game-started", (lobby) => {
-      console.log("Game started!", lobby);
       router.push(`/game/${code}`);
     });
 
@@ -231,6 +253,9 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       socket.off("player-session-invalid");
       socket.off("already-in-another-lobby");
       socket.off("invalid-join-request");
+      socket.off("start-game-error");
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
     };
   }, [code, router]);
 
@@ -418,18 +443,28 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     setShowCategoryModal(false);
   }
 
-  function startGame(){
-    if (!canStartGame){
+  function startGame() {
+    setStartError(null);
+
+    if (!canStartGame) {
+      setStartError(startMessage);
       return;
     }
 
     socket.emit("start-game", {
-      code
+      code,
     });
   }
   // JSX = HTML-like UI returned by the component.
   return (
-    <main className="relative min-h-dvh bg-black text-white p-4 sm:p-6 overflow-x-hidden">
+    <main className="relative min-h-dvh bg-black text-white p-3 sm:p-6 overflow-x-hidden">
+      {connectionState !== "connected" && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 rounded-full border border-yellow-700 bg-yellow-950/90 px-4 py-2 text-sm text-yellow-300 shadow-lg">
+          {connectionState === "connecting"
+            ? "Connecting..."
+            : "Reconnecting..."}
+        </div>
+      )}
       <div className="w-full flex justify-center mb-8">
           <button
               onClick={() => navigator.clipboard.writeText(code)}
@@ -449,9 +484,9 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           >
               📋
 
-              <span className="text-4xl sm:text-5xl font-mono font-bold tracking-widest">
-                  {code}
-              </span>
+            <span className="text-3xl sm:text-5xl font-mono font-bold tracking-widest">
+              {code}
+            </span>
           </button>
       </div>
 
@@ -687,7 +722,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
           {/* Name and game controls */}
           <div className="w-full mt-6 flex flex-col gap-3">
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 placeholder="Update your name"
@@ -704,7 +739,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
               <button
                 onClick={addPlayer}
-                className="shrink-0 bg-blue-600 px-5 rounded-xl hover:bg-blue-500"
+                className="w-full sm:w-auto shrink-0 bg-blue-600 px-5 py-3 rounded-xl hover:bg-blue-500"
               >
                 Update
               </button>
@@ -722,6 +757,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                 currentPlayer?.waitingForNextGame
               }
               className="
+                w-full
+                sm:w-auto
                 inline-flex
                 items-center
                 justify-center
@@ -748,6 +785,8 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   disabled={!canStartGame}
                   title={!canStartGame ? startMessage : ""}
                   className="
+                    w-full
+                    sm:w-auto
                     inline-flex
                     items-center
                     justify-center
@@ -766,6 +805,24 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   > 
                   Start Game
                 </button>
+
+                {startError && (
+                  <div className="mt-3 rounded-xl border border-red-800 bg-red-950/40 px-4 py-3 text-center">
+                    <p className="text-sm text-red-300">
+                      {startError}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStartError(null)
+                      }
+                      className="mt-2 text-xs text-gray-400 hover:text-white"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
 
                 {!canStartGame && (
                   <p className="text-sm text-center text-gray-400">
@@ -792,7 +849,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
         </div>
 
         {/* Upper-right player list */}
-        <div className="w-full mt-6 lg:mt-0 lg:fixed lg:top-6 lg:right-6 lg:w-72">
+        <div className="w-full mt-6 lg:mt-0 lg:fixed lg:top-6 lg:right-6 lg:w-72 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
           <section className="w-full bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-semibold">
@@ -948,7 +1005,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               <div ref={chatBottomRef} />
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 value={chatInput}
@@ -968,7 +1025,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               <button
                 onClick={sendChatMessage}
                 disabled={!chatInput.trim()}
-                className="shrink-0 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 px-4 rounded-xl text-sm font-semibold transition"
+                className="w-full sm:w-auto shrink-0 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 px-4 py-2 rounded-xl text-sm font-semibold transition"
               >
                 Send
               </button>

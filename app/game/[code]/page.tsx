@@ -98,8 +98,24 @@ export default function GamePage({ params }: GamePageProps) {
 
   const storedPlayerToken = getPlayerToken();
 
+  const [connectionState, setConnectionState] =
+    useState<"connecting" | "connected" | "reconnecting">(
+      "connecting"
+    );
+
   useEffect(() => {
     const storedPlayerId = getPlayerId();
+
+    const handleConnect = () => {
+      setConnectionState("connected");
+    };
+
+    const handleDisconnect = () => {
+      setConnectionState("reconnecting");
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
 
     setPlayerId(storedPlayerId);
     socket.connect();
@@ -116,11 +132,6 @@ export default function GamePage({ params }: GamePageProps) {
     });
 
     const handleLobbyUpdate = (updatedLobby: any) => {
-      console.log(
-        "Game lobby update:",
-        updatedLobby
-      );
-
       if (!updatedLobby?.gameState) {
         router.push(`/lobby/${code}`);
         return;
@@ -210,6 +221,9 @@ export default function GamePage({ params }: GamePageProps) {
       socket.off(
         "invalid-join-request"
       );
+
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
     };
   }, [code, router]);
 
@@ -343,8 +357,12 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (!gameState || !currentPlayer) {
     return (
-      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
-        Loading game...
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-3 sm:p-6 overflow-x-hidden">
+        <p className="text-lg text-gray-300">
+          {connectionState === "reconnecting"
+            ? "Reconnecting..."
+            : "Loading game..."}
+        </p>
       </main>
     );
   }
@@ -364,7 +382,7 @@ export default function GamePage({ params }: GamePageProps) {
     if (!isHost) return null;
 
     return (
-      <div className="mt-6 w-full max-w-80 border-t border-zinc-800 pt-5">
+      <div className="mt-6 w-full max-w-sm border-t border-zinc-800 pt-5">
         <p className="text-xs uppercase tracking-wide text-gray-500 text-center mb-3">
           Host Controls
         </p>
@@ -457,7 +475,7 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "transition") {
     return (
-      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-3 sm:p-6 overflow-x-hidden">
         <h1 className="text-3xl sm:text-5xl font-bold text-center mb-5">
           Next Round
         </h1>
@@ -477,8 +495,8 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "voting") {
     return (
-      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-3 text-center">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-3 sm:p-6 overflow-x-hidden">
+        <h1 className="text-3xl sm:text-5xl font-bold mb-3 text-center">
           Voting
         </h1>
 
@@ -582,7 +600,7 @@ export default function GamePage({ params }: GamePageProps) {
             socket.emit("return-to-lobby", { code });
             router.push(`/lobby/${code}`);
           }}
-          className="mt-6 w-full max-w-sm bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
+          className="mt-6 w-full sm:w-auto max-w-sm bg-zinc-700 px-6 py-3 rounded-xl hover:bg-zinc-600"
         >
           Return to Lobby
         </button>
@@ -594,12 +612,12 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "reveal") {
     return (
-      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-3 sm:p-6 overflow-x-hidden">
         <p className="text-lg text-gray-400 mb-4">
           The group voted out...
         </p>
 
-        <h1 className="text-4xl sm:text-6xl font-bold text-center">
+        <h1 className="text-3xl sm:text-6xl font-bold text-center break-words max-w-full">
           {gameState.votedPlayerName}
         </h1>
 
@@ -628,14 +646,14 @@ export default function GamePage({ params }: GamePageProps) {
 
   if (gameState.phase === "results") {
     return (
-      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-4 overflow-x-hidden">
+      <main className="min-h-dvh bg-black text-white flex flex-col items-center justify-center p-3 sm:p-6 overflow-x-hidden">
         <h1 className="text-5xl font-bold mb-6">Results</h1>
 
         <p className="text-xl text-gray-400 mb-4">
           The word was:
         </p>
 
-        <p className="text-5xl font-mono mb-8">
+        <p className="text-3xl sm:text-5xl font-mono mb-8 text-center break-words max-w-full">
           {gameState.word}
         </p>
 
@@ -666,7 +684,7 @@ export default function GamePage({ params }: GamePageProps) {
 
         {gameState.endReason !== "host-ended" && (
           <p
-            className={`text-4xl font-bold ${
+            className={`text-3xl sm:text-4xl font-bold text-center ${
               gameState.innocentsWin
                 ? "text-green-500"
                 : "text-red-500"
@@ -798,7 +816,7 @@ export default function GamePage({ params }: GamePageProps) {
   }
 
   return (
-    <main className="min-h-dvh bg-black text-white p-3 sm:p-4 overflow-x-hidden flex flex-col">
+    <main className="min-h-dvh bg-black text-white p-3 sm:p-6 overflow-x-hidden flex flex-col">
 
       {/* Header */}
       <div className="w-full flex flex-col items-center text-center mb-8">
@@ -901,12 +919,12 @@ export default function GamePage({ params }: GamePageProps) {
         </section>
 
         {/* RIGHT SIDE */}
-        <section className="flex flex-col items-center">
+        <section className="flex flex-col items-center w-full">
 
           {/* Role Card */}
           <div
             onClick={() => setCardOpened((current) => !current)}
-            className="w-[85vw] max-w-80 h-44 sm:h-52 cursor-pointer [perspective:1000px]"
+            className="w-full max-w-sm h-44 sm:h-52 cursor-pointer [perspective:1000px]"
           >
             <div
               className={`
@@ -949,13 +967,13 @@ export default function GamePage({ params }: GamePageProps) {
                     Category
                   </p>
 
-                  <h2 className="text-2xl sm:text-3xl font-bold mb-4">
+                  <h2 className="text-2xl sm:text-3xl font-bold mb-4 break-words max-w-full">
                     {gameState.category}
                   </h2>
 
                   {currentPlayer.role === "imposter" ? (
                     gameState.imposterMode === "similar-word" ? (
-                      <p className="text-3xl sm:text-4xl font-bold">
+                      <p className="text-3xl sm:text-4xl font-bold break-words max-w-full">
                         {gameState.imposterWord}
                       </p>
                     ) : (
@@ -970,7 +988,7 @@ export default function GamePage({ params }: GamePageProps) {
                       </div>
                     )
                   ) : (
-                    <p className="text-3xl sm:text-4xl font-bold">
+                    <p className="text-3xl sm:text-4xl font-bold break-words max-w-full">
                       {gameState.word}
                     </p>
                   )}

@@ -29,6 +29,12 @@ function startNextRound(
   const activePlayers =
     getActivePlayers(lobby.gameState);
 
+  if (activePlayers.length === 0) {
+    lobby.gameStarted = false;
+    lobby.gameState = null;
+    return;
+  }
+
   lobby.gameState.round += 1;
   lobby.gameState.phase = "discussion";
 
@@ -57,6 +63,16 @@ function getActivePlayers(gameState: any) {
     (player: any) =>
       !eliminatedPlayers.includes(player.id) &&
       player.connected !== false
+  );
+}
+
+function isValidPublicPlayerId(
+  value: unknown
+) {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 100
   );
 }
 
@@ -108,13 +124,53 @@ function sanitizePlayerName(name: unknown) {
     .slice(0, 16);
 }
 
+function getSafeLobbyBase(
+  lobby: any
+) {
+  return {
+    players: lobby.players.map(
+      (player: any) => ({
+        id: player.id,
+        name: player.name,
+        isReady: player.isReady,
+        isHost: player.isHost,
+        location: player.location,
+        connected: player.connected,
+        waitingForNextGame:
+          player.waitingForNextGame,
+      })
+    ),
+
+    settings: sanitizeSettings(lobby.settings),
+
+    locked: lobby.locked,
+
+    gameStarted: lobby.gameStarted,
+
+  chatMessages:
+    (lobby.chatMessages || []).map(
+      (message: any) => ({
+        id: message.id,
+        playerId: message.playerId,
+        playerName: message.playerName,
+        message: message.message,
+        timestamp: message.timestamp,
+      })
+    ),
+  };
+}
+
 function getLobbyForPlayer(
   lobby: any,
   playerId: string
 ) {
   // No active game
   if (!lobby.gameState) {
-    return lobby;
+    return {
+      ...getSafeLobbyBase(lobby),
+
+      gameState: null,
+    };
   }
 
   const currentGamePlayer =
@@ -127,7 +183,8 @@ function getLobbyForPlayer(
   // Do not send them the active game's secrets.
   if (!currentGamePlayer) {
     return {
-      ...lobby,
+      ...getSafeLobbyBase(lobby),
+
       gameState: null,
     };
   }
@@ -157,7 +214,7 @@ function getLobbyForPlayer(
     currentGamePlayer.role === "imposter";
 
   return {
-    ...lobby,
+    ...getSafeLobbyBase(lobby),
 
     gameState: {
       mode: lobby.gameState.mode,
@@ -252,6 +309,84 @@ function getLobbyForPlayer(
         )
           ? lobby.gameState.imposterWord
           : undefined,
+    },
+  };
+}
+
+function sanitizeSettings(
+  settings: any
+) {
+  const safeCategories =
+    Array.isArray(settings?.categories)
+      ? [
+          ...new Set(
+            settings.categories.filter(
+              (category: unknown) =>
+                typeof category === "string" &&
+                category in gameWords
+            )
+          ),
+        ].slice(0, Object.keys(gameWords).length)
+      : [];
+
+  const rawImposterCount =
+    Number(
+      settings?.imposter?.imposterCount
+    );
+
+  const rawTurnTime =
+    Number(
+      settings?.imposter?.turnTime
+    );
+
+  const safeImposterCount =
+    Number.isFinite(rawImposterCount)
+      ? Math.max(
+          1,
+          Math.min(
+            Math.floor(rawImposterCount),
+            10
+          )
+        )
+      : 1;
+
+  const safeTurnTime =
+    Number.isFinite(rawTurnTime)
+      ? Math.max(
+          10,
+          Math.min(
+            Math.floor(rawTurnTime),
+            300
+          )
+        )
+      : 45;
+
+  const safeImposterMode =
+    settings?.imposter?.imposterMode ===
+    "similar-word"
+      ? "similar-word"
+      : "no-word";
+
+  return {
+    mode: "imposter",
+
+    categories:
+      safeCategories.length > 0
+        ? safeCategories
+        : Object.keys(gameWords),
+
+    chatEnabled:
+      settings?.chatEnabled !== false,
+
+    imposter: {
+      imposterCount:
+        safeImposterCount,
+
+      turnTime:
+        safeTurnTime,
+
+      imposterMode:
+        safeImposterMode,
     },
   };
 }
@@ -702,6 +837,13 @@ function startPlayAgainGame(
       )
     );
 
+  if (
+    lobby.settings?.imposter
+  ) {
+    lobby.settings.imposter.imposterCount =
+      maxImposters;
+  }
+
   const shuffledIndexes =
     players
       .map(
@@ -811,9 +953,17 @@ function startPlayAgainGame(
 }
 
 export function setupSocket(server: any) {
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://hiddenparty.io",
+    "https://www.hiddenparty.io",
+  ];
+
   const io = new Server(server, {
     cors: {
-      origin: "*",
+      origin: allowedOrigins,
+      methods: ["GET", "POST"],
     },
   });
 
@@ -844,14 +994,6 @@ export function setupSocket(server: any) {
         // Socket has not joined as a player yet.
         // Never expose an active game.
         if (!playerId) {
-          socket.emit(
-            "lobby-update",
-            {
-              ...lobby,
-              gameState: null,
-            }
-          );
-
           return;
         }
 
@@ -890,23 +1032,8 @@ export function setupSocket(server: any) {
           return;
         }
 
-        // 2. Sanitize name
-        const safePlayerName =
-          sanitizePlayerName(
-            playerName
-          );
-
-        // 3. Create lobby if necessary
-        if (!lobbies[code]) {
-          lobbies[code] = {
-            players: [],
-            settings: {},
-            locked: false,
-            chatMessages: [],
-          };
-        }
-
-        // 4. Prevent socket from switching rooms
+        // 2. Prevent an authenticated socket from
+        // creating/switching to another room.
         if (
           socket.data.lobbyCode &&
           socket.data.lobbyCode !== code
@@ -916,6 +1043,22 @@ export function setupSocket(server: any) {
           );
 
           return;
+        }
+
+        // 3. Sanitize name
+        const safePlayerName =
+          sanitizePlayerName(
+            playerName
+          );
+
+        // 4. Create lobby if necessary
+        if (!lobbies[code]) {
+          lobbies[code] = {
+            players: [],
+            settings: {},
+            locked: false,
+            chatMessages: [],
+          };
         }
 
         const lobby =
@@ -1061,8 +1204,6 @@ export function setupSocket(server: any) {
           code,
           lobby
         );
-
-        console.log(lobbies);
       }
     );
 
@@ -1102,7 +1243,7 @@ export function setupSocket(server: any) {
 
       if (!requestingPlayer?.isHost) return;
 
-      lobby.settings = settings;
+      lobby.settings = sanitizeSettings(settings);
 
       emitLobbyUpdate(
         io,
@@ -1121,6 +1262,31 @@ export function setupSocket(server: any) {
         const lobby = lobbies[code];
 
         if (!lobby) return;
+
+        const allowedKickPhases = [
+          "discussion",
+          "voting",
+          "transition",
+          "reveal",
+          "results",
+        ];
+
+        if (
+          lobby.gameState &&
+          !allowedKickPhases.includes(
+            lobby.gameState.phase
+          )
+        ) {
+          return;
+        }
+
+        if (
+          !isValidPublicPlayerId(
+            targetPlayerId
+          )
+        ) {
+          return;
+        }
 
         if (
           isRateLimited(
@@ -1344,36 +1510,42 @@ export function setupSocket(server: any) {
                 lobby.gameState
               );
 
-            if (activePlayers.length > 0) {
-              const randomPlayer =
-                activePlayers[
-                  Math.floor(
-                    Math.random() *
-                      activePlayers.length
-                  )
-                ];
+            if (activePlayers.length === 0) {
+              lobby.gameStarted = false;
+              lobby.gameState = null;
 
-              lobby.gameState.phase =
-                "discussion";
+              emitLobbyUpdate(
+                io,
+                code,
+                lobby
+              );
 
-              lobby.gameState.currentTurn =
-                lobby.gameState.players.findIndex(
-                  (player: any) =>
-                    player.id ===
-                    randomPlayer.id
-                );
-
-              lobby.gameState.spokenPlayers =
-                [];
-
-              lobby.gameState.votes = {};
-
-              lobby.gameState.voteResults =
-                [];
-
-              lobby.gameState.roundMessage =
-                `${targetPlayer.name} was removed from the game. The round has restarted.`;
+              return;
             }
+
+            const randomPlayer =
+              activePlayers[
+                Math.floor(
+                  Math.random() *
+                  activePlayers.length
+                )
+              ];
+
+            lobby.gameState.phase =
+              "discussion";
+
+            lobby.gameState.currentTurn =
+              lobby.gameState.players.findIndex(
+                (player: any) =>
+                  player.id === randomPlayer.id
+              );
+
+            lobby.gameState.spokenPlayers = [];
+            lobby.gameState.votes = {};
+            lobby.gameState.voteResults = [];
+
+            lobby.gameState.roundMessage =
+              `${targetPlayer.name} was removed from the game. The round has restarted.`;
           }
         }
 
@@ -1399,6 +1571,13 @@ export function setupSocket(server: any) {
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      if (
+        lobby.gameStarted ||
+        lobby.gameState
+      ) {
+        return;
+      }
 
       if (
         isRateLimited(
@@ -1435,6 +1614,13 @@ export function setupSocket(server: any) {
 
       if (!lobby) return;
 
+      if (
+        lobby.gameStarted ||
+        lobby.gameState
+      ) {
+        return;
+      }
+
       if (lobby.settings?.chatEnabled === false) {
         return;
       }
@@ -1457,15 +1643,28 @@ export function setupSocket(server: any) {
 
       if (!player) return;
 
-      const trimmedMessage = message?.trim();
+      if (typeof message !== "string") {
+        return;
+      }
 
-      if (!trimmedMessage) return;
+      const safeMessage =
+        message
+          .slice(0, 500)
+          .replace(
+            /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,
+            ""
+          )
+          .trim();
+
+      if (!safeMessage) {
+        return;
+      }
 
       const chatMessage = {
         id: `${Date.now()}-${player.id}`,
         playerId: player.id,
         playerName: player.name,
-        message: trimmedMessage.slice(0, 200),
+        message: safeMessage.slice(0, 200),
         timestamp: Date.now(),
       };
 
@@ -1542,6 +1741,31 @@ export function setupSocket(server: any) {
       const lobby = lobbies[code];
 
       if (!lobby) return;
+
+      const allowedTransferPhases = [
+        "discussion",
+        "voting",
+        "transition",
+        "reveal",
+        "results",
+      ];
+
+      if (
+        lobby.gameState &&
+        !allowedTransferPhases.includes(
+          lobby.gameState.phase
+        )
+      ) {
+        return;
+      }
+
+      if (
+        !isValidPublicPlayerId(
+          targetPlayerId
+        )
+      ) {
+        return;
+      }
 
       if (
         isRateLimited(
@@ -1621,6 +1845,13 @@ export function setupSocket(server: any) {
       if (!lobby?.gameState) return;
 
       if (
+        lobby.gameState.phase ===
+        "results"
+      ) {
+        return;
+      }
+
+      if (
         isRateLimited(
           socket.id,
           "host-action",
@@ -1654,7 +1885,7 @@ export function setupSocket(server: any) {
       }
       const lobby = lobbies[code];
 
-      if (!lobby) return;
+      if (!lobby?.gameState) return;
 
       if (
         isRateLimited(
@@ -1725,13 +1956,25 @@ export function setupSocket(server: any) {
 
       if (!requestingPlayer?.isHost) return;
 
-      if (players.length < 3) return;
+    if (players.length < 3) {
+      socket.emit("start-game-error", {
+        message: "Need at least 3 players to start.",
+      });
+
+      return;
+    }
 
       const everyoneReady = players.every(
         (player: any) => player.isReady
       );
 
-      if (!everyoneReady) return;
+      if (!everyoneReady) {
+        socket.emit("start-game-error", {
+          message: "All players must be ready.",
+        });
+
+        return;
+      }
 
       const selectedCategories =
         lobby.settings?.categories?.length > 0
@@ -1743,6 +1986,10 @@ export function setupSocket(server: any) {
       );
 
       if (categoryNames.length === 0) {
+        socket.emit("start-game-error", {
+          message: "Select at least one valid category.",
+        });
+
         return;
       }
 
@@ -1763,6 +2010,13 @@ export function setupSocket(server: any) {
         )
       );
 
+      if (
+        lobby.settings?.imposter
+      ) {
+        lobby.settings.imposter.imposterCount =
+          maxImposters;
+      }
+
       const shuffledIndexes = players
         .map((_: any, index: number) => index)
         .sort(() => Math.random() - 0.5);
@@ -1781,6 +2035,11 @@ export function setupSocket(server: any) {
         imposterMode === "similar-word" &&
         otherWords.length === 0
       ) {
+        socket.emit("start-game-error", {
+          message:
+            "The selected category does not have enough words for Similar Word mode.",
+        });
+
         return;
       }
 
@@ -1863,14 +2122,45 @@ export function setupSocket(server: any) {
 
       if (!lobby?.gameState) return;
 
-      const activePlayers = getActivePlayers(lobby.gameState);
+      if (
+        lobby.gameState.phase !==
+        "discussion"
+      ) {
+        return;
+      }
 
-      const totalPlayers = activePlayers.length;
+      const activePlayers =
+        getActivePlayers(
+          lobby.gameState
+        );
+
+      if (activePlayers.length === 0) {
+        lobby.gameStarted = false;
+        lobby.gameState = null;
+
+        emitLobbyUpdate(
+          io,
+          code,
+          lobby
+        );
+
+        return;
+      }
+
+      const totalPlayers =
+        activePlayers.length;
 
       const activePlayer =
-        lobby.gameState.players[lobby.gameState.currentTurn];
+        lobby.gameState.players[
+          lobby.gameState.currentTurn
+        ];
 
-      if (activePlayer?.socketId !== socket.id) return;
+      if (
+        activePlayer?.socketId !==
+        socket.id
+      ) {
+        return;
+      }
 
       if (
         !lobby.gameState.spokenPlayers.includes(
@@ -1882,7 +2172,10 @@ export function setupSocket(server: any) {
         );
       }
 
-      if (lobby.gameState.spokenPlayers.length >= totalPlayers) {
+      if (
+        lobby.gameState.spokenPlayers.length >=
+        totalPlayers
+      ) {
         lobby.gameState.phase = "voting";
 
         emitLobbyUpdate(
@@ -1890,25 +2183,44 @@ export function setupSocket(server: any) {
           code,
           lobby
         );
+
         return;
       }
 
       let nextIndex =
-        (lobby.gameState.currentTurn + 1) %
+        (
+          lobby.gameState.currentTurn + 1
+        ) %
         lobby.gameState.players.length;
+
+      let attempts = 0;
 
       while (
         lobby.gameState.eliminatedPlayers?.includes(
-          lobby.gameState.players[nextIndex].id
+          lobby.gameState.players[
+            nextIndex
+          ].id
         ) ||
-        lobby.gameState.players[nextIndex].connected === false
+        lobby.gameState.players[
+          nextIndex
+        ].connected === false
       ) {
         nextIndex =
           (nextIndex + 1) %
           lobby.gameState.players.length;
+
+        attempts += 1;
+
+        if (
+          attempts >=
+          lobby.gameState.players.length
+        ) {
+          return;
+        }
       }
 
-      lobby.gameState.currentTurn = nextIndex;
+      lobby.gameState.currentTurn =
+        nextIndex;
 
       emitLobbyUpdate(
         io,
@@ -1926,6 +2238,13 @@ export function setupSocket(server: any) {
 
       if (!lobby?.gameState) return;
       if (lobby.gameState.phase !== "voting") return;
+
+      if (
+        vote !== "skip" &&
+        !isValidPublicPlayerId(vote)
+      ) {
+        return;
+      }
 
       if (
         isRateLimited(
@@ -2086,6 +2405,23 @@ export function setupSocket(server: any) {
       );
 
       if (!player) return;
+
+      const allowedReturnPhases = [
+        "discussion",
+        "voting",
+        "transition",
+        "reveal",
+        "results",
+      ];
+
+      if (
+        lobby.gameState &&
+        !allowedReturnPhases.includes(
+          lobby.gameState.phase
+        )
+      ) {
+        return;
+      }
 
       const leavingPlayerId = player.id;
       const wasHost = player.isHost;
@@ -2262,6 +2598,19 @@ export function setupSocket(server: any) {
               lobby.gameState
             );
 
+          if (activePlayers.length === 0) {
+            lobby.gameStarted = false;
+            lobby.gameState = null;
+
+            emitLobbyUpdate(
+              io,
+              code,
+              lobby
+            );
+
+            return;
+          }
+
           lobby.gameState.phase =
             "discussion";
 
@@ -2357,6 +2706,8 @@ export function setupSocket(server: any) {
               (lobby.gameState.currentTurn + 1) %
               lobby.gameState.players.length;
 
+            let attempts = 0;
+
             while (
               lobby.gameState.eliminatedPlayers?.includes(
                 lobby.gameState.players[nextIndex].id
@@ -2367,9 +2718,24 @@ export function setupSocket(server: any) {
               nextIndex =
                 (nextIndex + 1) %
                 lobby.gameState.players.length;
+
+              attempts += 1;
+
+              if (
+                attempts >=
+                lobby.gameState.players.length
+              ) {
+                break;
+              }
             }
 
-            lobby.gameState.currentTurn = nextIndex;
+            if (
+              attempts <
+              lobby.gameState.players.length
+            ) {
+              lobby.gameState.currentTurn =
+                nextIndex;
+            }
           }
         }
       }
